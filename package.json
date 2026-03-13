@@ -1,0 +1,26 @@
+{
+  "name": "isomorphic-mesh",
+  "version": "1.0.0",
+  "description": "A standalone isomorphic networking library",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "eventemitter3": "^5.0.1",
+    "ws": "^8.16.0",
+    "nanoid": "^5.0.6",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.19",
+    "@types/ws": "^8.5.10",
+    "@types/express": "^4.17.21"
+  }
+}
