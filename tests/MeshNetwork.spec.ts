@@ -1,9 +1,9 @@
 import { MeshNetwork } from '../src/core/MeshNetwork';
-import { ILogger, IRegistry } from '../src/types/mesh.types';
+import { ILogger, IServiceRegistry } from '../src/types/mesh.types';
 
 describe('MeshNetwork Smoke Test', () => {
     let logger: ILogger;
-    let registry: IRegistry;
+    let registry: IServiceRegistry;
 
     beforeEach(() => {
         logger = {
@@ -15,7 +15,11 @@ describe('MeshNetwork Smoke Test', () => {
         };
         registry = {
             getNode: jest.fn(),
-            getNodes: jest.fn().mockReturnValue([])
+            getNodes: jest.fn().mockReturnValue([]),
+            getAvailableNodes: jest.fn().mockReturnValue([]),
+            registerNode: jest.fn(),
+            unregisterNode: jest.fn(),
+            heartbeat: jest.fn()
         };
     });
 
