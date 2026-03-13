@@ -41,7 +41,6 @@ export class TCPTransport extends BaseTransport {
 
         this.nodeID = opts.nodeID;
         this.logger = opts.logger;
-        // In a real scenario, privateKey would be part of opts or injected
         this.privateKey = (opts as any).privateKey;
         this.registry = (opts as any).registry;
 
@@ -106,7 +105,6 @@ export class TCPTransport extends BaseTransport {
             bufferPot: new Uint8Array(0)
         };
 
-        // Send challenge to incoming connection
         const nonce = IsomorphicCrypto.randomID(16);
         const challenge = JSON.stringify({ type: 'challenge', nonce });
         socket.write(TCPFrameCodec.encode(WirePacketType.AUTH, 'handshake', new TextEncoder().encode(challenge)));
@@ -126,15 +124,27 @@ export class TCPTransport extends BaseTransport {
 
     private processData(peer: PeerState, chunk: Uint8Array) {
         const Buffer = eval('require')('buffer').Buffer;
-        // Efficient chunking: append to bufferPot
+        
+        // FIX: TCP DDOS - Prevent bufferPot from growing indefinitely
+        // Check size before concatenation
+        if (peer.bufferPot.length + chunk.length > TCPFrameCodec.MAX_FRAME_SIZE + 21) {
+            this.logger?.error(`[TCPTransport] Buffer overflow from ${peer.nodeID || 'unknown'}. Closing.`);
+            (peer.socket as INodeSocket).destroy();
+            return;
+        }
+
         peer.bufferPot = Buffer.concat([peer.bufferPot, chunk]);
         
-        // Handle potentially multiple frames in one data event or partial frames
-        while (true) {
-            const { frame, remaining } = TCPFrameCodec.decode(peer.bufferPot);
-            if (!frame) break;
-            peer.bufferPot = remaining;
-            this.dispatchFrame(peer, frame);
+        try {
+            while (true) {
+                const { frame, remaining } = TCPFrameCodec.decode(peer.bufferPot);
+                if (!frame) break;
+                peer.bufferPot = remaining;
+                this.dispatchFrame(peer, frame);
+            }
+        } catch (err: any) {
+            this.logger?.error(`[TCPTransport] Framing error: ${err.message}`);
+            (peer.socket as INodeSocket).destroy();
         }
     }
 
