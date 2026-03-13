@@ -10,6 +10,10 @@ import { IPCTransport } from '../transports/IPCTransport';
 import { TCPTransport } from '../transports/TCPTransport';
 import { TransportType, SerializerType } from '../types/mesh.types';
 
+/**
+ * TransportFactory — Creates transport and serializer instances.
+ * Note: Actual implementations are swapped via conditional exports at the index level.
+ */
 export class TransportFactory {
     static createSerializer(type: SerializerType): BaseSerializer {
         switch (type) {

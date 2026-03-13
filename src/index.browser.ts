@@ -6,10 +6,10 @@ export * from './core/MeshOrchestrator';
 export * from './core/UnifiedServer';
 export * from './core/TransportFactory';
 export * from './transports/BaseTransport';
-export * from './transports/node/WSTransport';
-export * from './transports/HTTPTransport'; // To be split
-export * from './transports/node/TCPTransport';
-export * from './transports/IPCTransport'; // To be split
+export * from './transports/browser/WSTransport';
+export * from './transports/browser/HTTPTransport';
+export * from './transports/browser/TCPTransport';
+export * from './transports/browser/IPCTransport';
 export * from './transports/NATSTransport';
 export * from './serializers/BaseSerializer';
 export * from './serializers/JSONSerializer';
