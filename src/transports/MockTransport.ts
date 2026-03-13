@@ -1,7 +1,8 @@
 import { BaseTransport } from './BaseTransport';
-import { WirePacket, TransportConfig } from '../types/mesh.types';
+import { BaseSerializer } from '../serializers/BaseSerializer';
+import { TransportConnectOptions } from '../types/mesh.types';
 
-export interface MockTransportConfig extends TransportConfig {
+export interface MockTransportConfig {
     latency?: number; // ms
     jitter?: number;  // 0-1
     reliability?: number; // 0-1 (1 = 100% reliable)
@@ -11,41 +12,42 @@ export interface MockTransportConfig extends TransportConfig {
  * MockTransport — A testing transport that simulates network conditions.
  */
 export class MockTransport extends BaseTransport {
-    private reliability: number;
-    private latency: number;
+    public readonly protocol = 'mock';
+    private mockConfig: MockTransportConfig;
 
-    constructor(config: MockTransportConfig = {}) {
-        super(config);
-        this.reliability = config.reliability ?? 1;
-        this.latency = config.latency ?? 10;
+    constructor(serializer: BaseSerializer, config: MockTransportConfig = {}) {
+        super(serializer);
+        this.mockConfig = config;
     }
 
-    async connect(): Promise<void> {
+    async connect(opts: TransportConnectOptions): Promise<void> {
+        this.nodeID = opts.nodeID;
+        this.connected = true;
         this.emit('connected');
     }
 
     async disconnect(): Promise<void> {
+        this.connected = false;
         this.emit('disconnected');
     }
 
-    async send(packet: WirePacket): Promise<void> {
+    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
         // Simulate reliability
-        if (Math.random() > this.reliability) {
-            console.warn(`[MockTransport] Packet dropped: ${packet.type}`);
+        const reliability = this.mockConfig.reliability ?? 1;
+        if (Math.random() > reliability) {
             return;
         }
 
         // Simulate latency
-        const delay = this.latency + (Math.random() * 20); // Add a bit of jitter
+        const latency = this.mockConfig.latency ?? 10;
+        const delay = latency + (Math.random() * (this.mockConfig.jitter ? this.mockConfig.jitter * 100 : 20));
         
         setTimeout(() => {
-            // Echo back or handle internal routing logic
-            // In a real mock, we might have a static registry of "nodes"
-            this.emit('message', packet);
+            this.emit('message', { nodeID, packet });
         }, delay);
     }
 
-    async publish(topic: string, packet: WirePacket): Promise<void> {
-        await this.send(packet);
+    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
+        await this.send('all', data);
     }
 }
