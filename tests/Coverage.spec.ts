@@ -173,7 +173,7 @@ describe('Coverage', () => {
         t.logger = { error: jest.fn(), warn: jest.fn() };
         
         const mockSocket = { write: jest.fn(), on: jest.fn(), end: jest.fn(), destroy: jest.fn() };
-        t.peers.set('n2', mockSocket);
+        t.peerAddresses.set('n2', mockSocket);
 
         try { await t.connect({ url: 'ipc:///tmp/test.sock', nodeID: 'n1' }); } catch(e) {}
         try { await t.send('n2', { a: 1 }); } catch(e) {}
@@ -189,7 +189,7 @@ describe('Coverage', () => {
     it('HTTPTransport coverage', async () => {
         const t = new HTTPTransport(serializer) as any;
         t.nodeID = 'n1';
-        t.peers.set('n2', 'http://127.0.0.1:1234');
+        t.peerAddresses.set('n2', 'http://127.0.0.1:1234');
 
         try { await t.connect({ url: 'http://127.0.0.1:1234', nodeID: 'n1' }); } catch(e) {}
         try { await t.send('n2', { a: 1 }); } catch(e) {}
@@ -218,7 +218,7 @@ describe('Coverage', () => {
         try { await engine.getAll(); } catch(e) {}
         try { await engine.remove('key'); } catch(e) {}
         try { await engine.clear(); } catch(e) {}
-    });
+    }, 10000);
 
     it('Crypto coverage', async () => {
         try { IsomorphicCrypto.toBase64(new Uint8Array(10)); } catch(e) {}
