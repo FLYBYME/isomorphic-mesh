@@ -18,7 +18,8 @@ export class NetworkController {
         dispatcher.on('$node.info', this.handleNodeInfo.bind(this));
         dispatcher.on('$node.heartbeat', this.handleNodeHeartbeat.bind(this));
         dispatcher.on('$node.disconnect', this.handleNodeDisconnect.bind(this));
-        dispatcher.on('$node.ping', async () => { });
+        dispatcher.on('$node.ping', this.handlePing.bind(this));
+        dispatcher.on('$node.pex', this.handlePEX.bind(this));
         
         dispatcher.on('$rpc.request', this.handleRPCRequest.bind(this));
         dispatcher.on('$rpc.response', this.handleRPCResponse.bind(this));
@@ -55,11 +56,25 @@ export class NetworkController {
         }
     }
 
+    private async handlePing(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        // Echo back a pong with same ID
+        if (packet.id) {
+            (this.node as any).publish('$node.pong', { id: packet.id, timestamp: Date.now() });
+        }
+    }
+
+    private async handlePEX(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        const orchestrator = (this.node as any).orchestrator;
+        if (orchestrator) {
+            await orchestrator.handlePEX(data);
+        }
+    }
+
     private async handleRPCRequest(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
         this.node.logger.debug('Incoming RPC request', { action: data.action as string });
     }
 
     private async handleRPCResponse(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
-        // Implementation for resolving pending RPC calls
+        // Handled by Transport internally if it has correlation logic
     }
 }
