@@ -1,0 +1,542 @@
+/**
+ * WebCrypto-based cryptographic utilities (Isomorphic/Browser-safe).
+ */
+export class IsomorphicCrypto {
+    private static crypto = typeof globalThis !== 'undefined' && globalThis.crypto 
+        ? globalThis.crypto 
+        : (typeof require !== 'undefined' ? eval('require')('node:crypto').webcrypto : null);
+
+    /** Generate a random ID string */
+    static randomID(len = 16): string {
+        const bytes = new Uint8Array(len / 2);
+        if (this.crypto) {
+            this.crypto.getRandomValues(bytes);
+        } else {
+            for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+        }
+        return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /** Sign data using Ed25519 private key (Base64) */
+    static async signEd25519(payload: string | Uint8Array, privateKeyB64: string): Promise<string> {
+        if (!this.crypto) throw new Error('WebCrypto not available');
+        
+        const privKeyBuf = this.fromBase64(privateKeyB64);
+        const key = await this.crypto.subtle.importKey(
+            'pkcs8',
+            privKeyBuf,
+            { name: 'Ed25519' },
+            false,
+            ['sign']
+        );
+
+        const data = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
+        const signature = await this.crypto.subtle.sign(
+            { name: 'Ed25519' },
+            key,
+            data
+        );
+
+        return this.toBase64(new Uint8Array(signature));
+    }
+
+    /** Verify Ed25519 signature */
+    static async verifyEd25519(signatureB64: string, payload: string | Uint8Array, publicKeyB64: string): Promise<boolean> {
+        if (!this.crypto) return false;
+
+        try {
+            const pubKeyBuf = this.fromBase64(publicKeyB64);
+            const key = await this.crypto.subtle.importKey(
+                'spki',
+                pubKeyBuf,
+                { name: 'Ed25519' },
+                false,
+                ['verify']
+            );
+
+            const data = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
+            const signature = this.fromBase64(signatureB64);
+
+            return await this.crypto.subtle.verify(
+                { name: 'Ed25519' },
+                key,
+                signature,
+                data
+            );
+        } catch (err) {
+            return false;
+        }
+    }
+
+    /** Helper: bytes to Base64 (isomorphic) */
+    static toBase64(bytes: Uint8Array): string {
+        if (typeof Buffer !== 'undefined') return Buffer.from(bytes).toString('base64');
+        const binString = Array.from(bytes).map(x => String.fromCharCode(x)).join('');
+        return globalThis.btoa(binString);
+    }
+
+    /** Helper: Base64 to Uint8Array (isomorphic) */
+    static fromBase64(b64: string): Uint8Array {
+        if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(b64, 'base64'));
+        const binString = globalThis.atob(b64);
+        return Uint8Array.from(binString, (m) => m.charCodeAt(0));
+    }
+}
+export class Env {
+    static isNode(): boolean {
+        return typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
+    }
+
+    static isBrowser(): boolean {
+        return typeof window !== 'undefined' && typeof window.document !== 'undefined';
+    }
+}
+import { IMeshNode, ILogger, NodeInfo } from '../types/mesh.types';
+
+export interface MeshOrchestratorOptions {
+    bootstrapNodes?: string[];
+    gossipIntervalMs?: number;
+}
+
+/**
+ * MeshOrchestrator — manages the DHT overlay network lifecycle and gossip.
+ */
+export class MeshOrchestrator {
+    private logger: ILogger;
+    private gossipInterval: NodeJS.Timeout | null = null;
+
+    constructor(
+        private node: IMeshNode,
+        private options: MeshOrchestratorOptions = {}
+    ) {
+        this.logger = node.logger.child({ name: 'MeshOrchestrator' });
+    }
+
+    async start(): Promise<void> {
+        this.logger.info(`MeshOrchestrator starting with ${this.options.bootstrapNodes?.length || 0} bootstrap nodes`);
+
+        if (this.options.bootstrapNodes?.length) {
+            await this.bootstrap();
+        }
+
+        // Start Gossip interval
+        this.gossipInterval = setInterval(() => this.gossipRound(), this.options.gossipIntervalMs || 10000);
+    }
+
+    async stop(): Promise<void> {
+        if (this.gossipInterval) clearInterval(this.gossipInterval);
+    }
+
+    private async bootstrap(): Promise<void> {
+        for (const addr of this.options.bootstrapNodes || []) {
+            try {
+                this.logger.info(`Bootstrapping from ${addr}`);
+                // In a full implementation, we'd send a join request
+            } catch (err) {
+                this.logger.warn(`Failed to bootstrap from ${addr}`);
+            }
+        }
+    }
+
+    /**
+     * Gossip Protocol: Periodically exchange known peer lists (PEX).
+     */
+    private async gossipRound(): Promise<void> {
+        const nodes = this.node.registry.getAvailableNodes();
+        if (nodes.length === 0) return;
+
+        // Select a random peer to gossip with
+        const target = nodes[Math.floor(Math.random() * nodes.length)];
+        this.logger.debug(`Gossip: Exchanging peer list with ${target.nodeID}`);
+
+        // Send our known nodes (excluding the target itself)
+        const knownNodes = this.node.registry.getNodes()
+            .filter(n => n.nodeID !== target.nodeID)
+            .map(n => ({
+                nodeID: n.nodeID,
+                addresses: n.addresses,
+                namespace: n.namespace,
+                type: n.type
+            }));
+
+        // We use the node's emit/publish mechanism via the dispatcher or direct transport
+        // For simplicity, we assume the dispatcher handles '$node.pex'
+        (this.node as any).publish('$node.pex', {
+            peers: knownNodes
+        }).catch(() => {});
+    }
+
+    /**
+     * Handles incoming Peer Exchange (PEX) data.
+     */
+    async handlePEX(data: { peers: Partial<NodeInfo>[] }): Promise<void> {
+        if (!data.peers || !Array.isArray(data.peers)) return;
+
+        for (const peer of data.peers) {
+            if (!peer.nodeID || peer.nodeID === this.node.nodeId) continue;
+
+            const existing = this.node.registry.getNode(peer.nodeID);
+            if (!existing) {
+                this.logger.info(`Gossip: Discovered new node ${peer.nodeID} via PEX`);
+                // Register as a skeleton node, heartbeat will fill details
+                this.node.registry.registerNode({
+                    nodeID: peer.nodeID,
+                    addresses: peer.addresses || [],
+                    namespace: peer.namespace || 'default',
+                    type: peer.type || 'unknown',
+                    available: true,
+                    timestamp: Date.now(),
+                    nodeSeq: 0,
+                    hostname: 'unknown',
+                    services: []
+                });
+            }
+        }
+    }
+}
+import { IMeshNode, ILogger, TransportEnvelope } from '../types/mesh.types';
+import { NetworkDispatcher } from './NetworkDispatcher';
+
+/**
+ * NetworkController - Handles standard mesh packets.
+ */
+export class NetworkController {
+    private logger: ILogger;
+
+    constructor(
+        private node: IMeshNode,
+        logger: ILogger
+    ) {
+        this.logger = logger.child({ name: 'NetworkController' });
+    }
+
+    public registerHandlers(dispatcher: NetworkDispatcher): void {
+        dispatcher.on('$node.info', this.handleNodeInfo.bind(this));
+        dispatcher.on('$node.heartbeat', this.handleNodeHeartbeat.bind(this));
+        dispatcher.on('$node.disconnect', this.handleNodeDisconnect.bind(this));
+        dispatcher.on('$node.ping', this.handlePing.bind(this));
+        dispatcher.on('$node.pex', this.handlePEX.bind(this));
+        
+        dispatcher.on('$rpc.request', this.handleRPCRequest.bind(this));
+        dispatcher.on('$rpc.response', this.handleRPCResponse.bind(this));
+    }
+
+    private async handleNodeInfo(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        const nodeID = data.nodeID as string;
+        if (nodeID && nodeID !== this.node.nodeId) {
+            this.node.registry.registerNode({
+                nodeID,
+                namespace: (data.namespace as string) || 'default',
+                addresses: (data.addresses as string[]) || [],
+                type: (data.type as string) || 'unknown',
+                available: true,
+                timestamp: Date.now(),
+                capabilities: (data.capabilities as Record<string, unknown>) || {},
+                services: (data.services as any[]) || []
+            });
+            this.logger.info('New node discovered', { remoteNodeID: nodeID });
+        }
+    }
+
+    private async handleNodeHeartbeat(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        const nodeID = data.nodeID as string;
+        if (nodeID && nodeID !== this.node.nodeId) {
+            this.node.registry.heartbeat(nodeID, data);
+        }
+    }
+
+    private async handleNodeDisconnect(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        const nodeID = data.nodeID as string;
+        if (nodeID && nodeID !== this.node.nodeId) {
+            this.node.registry.unregisterNode(nodeID);
+        }
+    }
+
+    private async handlePing(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        // Echo back a pong with same ID
+        if (packet.id) {
+            (this.node as any).publish('$node.pong', { id: packet.id, timestamp: Date.now() });
+        }
+    }
+
+    private async handlePEX(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        const orchestrator = (this.node as any).orchestrator;
+        if (orchestrator) {
+            await orchestrator.handlePEX(data);
+        }
+    }
+
+    private async handleRPCRequest(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        this.node.logger.debug('Incoming RPC request', { action: data.action as string });
+    }
+
+    private async handleRPCResponse(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+        // Handled by Transport internally if it has correlation logic
+    }
+}
+import { ILogger, TransportEnvelope } from '../types/mesh.types';
+
+export type NetworkHandler = (data: Record<string, unknown>, packet: TransportEnvelope) => void | Promise<void>;
+
+interface RateLimitInfo {
+    count: number;
+    resetAt: number;
+}
+
+/**
+ * NetworkDispatcher - Routes incoming network packets to the appropriate handlers.
+ * Includes a built-in Rate Limiting middleware.
+ */
+export class NetworkDispatcher {
+    private handlers: Map<string, NetworkHandler> = new Map();
+    private prefixHandlers: Map<string, NetworkHandler> = new Map();
+    
+    // Rate Limiting
+    private rateLimits = new Map<string, RateLimitInfo>();
+    private readonly MAX_PACKETS_PER_WINDOW = 1000;
+    private readonly WINDOW_MS = 60000;
+
+    constructor(private logger: ILogger) { }
+
+    /**
+     * Register a handler for a specific topic or a topic prefix (using *).
+     */
+    on(topic: string, handler: NetworkHandler): void {
+        if (topic.endsWith('*')) {
+            this.prefixHandlers.set(topic.slice(0, -1), handler);
+        } else {
+            this.handlers.set(topic, handler);
+        }
+    }
+
+    /**
+     * Dispatch an incoming packet to the registered handlers.
+     */
+    async dispatch(packet: TransportEnvelope): Promise<void> {
+        // 1. Rate Limiting Middleware
+        if (packet.senderNodeID && !this.checkRateLimit(packet.senderNodeID)) {
+            this.logger.warn(`[NetworkDispatcher] Rate limit exceeded for node: ${packet.senderNodeID}`);
+            return;
+        }
+
+        const isDirect = packet.topic === '__direct';
+        const topic = isDirect ? (packet.data?.topic as string) : packet.topic;
+        let data = isDirect ? (packet.data as Record<string, unknown>) : (packet.data ?? packet);
+
+        if (isDirect && data && typeof data === 'object' && data.data !== undefined) {
+            data = data.data as Record<string, unknown>;
+        }
+
+        if (!topic) {
+            this.logger.warn('[NetworkDispatcher] Received packet without topic', { packet: packet as unknown as Record<string, unknown> });
+            return;
+        }
+
+        // 2. Exact Match
+        const handler = this.handlers.get(topic);
+        if (handler) {
+            await handler(data as Record<string, unknown>, packet);
+            return;
+        }
+
+        // 3. Prefix Match
+        for (const [prefix, h] of this.prefixHandlers.entries()) {
+            if (topic.startsWith(prefix)) {
+                await h(data as Record<string, unknown>, packet);
+                return;
+            }
+        }
+        
+        this.logger.debug(`[NetworkDispatcher] No handler registered for topic: ${topic}`);
+    }
+
+    /**
+     * Simple sliding window rate limiter.
+     */
+    private checkRateLimit(nodeID: string): boolean {
+        const now = Date.now();
+        let info = this.rateLimits.get(nodeID);
+
+        if (!info || now > info.resetAt) {
+            info = { count: 1, resetAt: now + this.WINDOW_MS };
+            this.rateLimits.set(nodeID, info);
+            return true;
+        }
+
+        info.count++;
+        if (info.count > this.MAX_PACKETS_PER_WINDOW) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Periodically cleanup the rate limit cache.
+     */
+    public cleanupRateLimits(): void {
+        const now = Date.now();
+        for (const [nodeID, info] of this.rateLimits.entries()) {
+            if (now > info.resetAt) {
+                this.rateLimits.delete(nodeID);
+            }
+        }
+    }
+}
+import { EventEmitter } from 'eventemitter3';
+import { BaseTransport } from '../transports/BaseTransport';
+import { BaseSerializer } from '../serializers/BaseSerializer';
+import { TransportFactory } from './TransportFactory';
+import { IMeshNode, TransportType, SerializerType, TransportConnectOptions } from '../types/mesh.types';
+
+export interface TransportOptions {
+    transportType: TransportType | TransportType[];
+    serializerType: SerializerType;
+    port: number;
+    host: string;
+}
+
+export class TransportManager extends EventEmitter {
+    private transports = new Map<TransportType, BaseTransport>();
+    private serializer: BaseSerializer;
+    private primaryTransport: BaseTransport;
+    private primaryType: TransportType;
+
+    constructor(options: TransportOptions, private node: IMeshNode) {
+        super();
+        const types = Array.isArray(options.transportType) ? options.transportType : [options.transportType];
+        this.serializer = TransportFactory.createSerializer(options.serializerType);
+        this.primaryType = types[0] || 'ws';
+
+        for (const type of types) {
+            const transport = TransportFactory.createTransport(type, this.serializer, options.port);
+            transport.on('packet', (envelope: Record<string, unknown>) => this.emit('packet', envelope));
+            this.transports.set(type, transport);
+        }
+
+        this.primaryTransport = this.transports.get(this.primaryType)!;
+    }
+
+    async connect(opts: Partial<TransportConnectOptions>): Promise<void> {
+        for (const t of this.transports.values()) {
+            await t.connect({
+                url: opts.url || '',
+                nodeID: this.node.nodeId,
+                namespace: this.node.namespace,
+                logger: this.node.logger,
+                port: opts.port
+            });
+        }
+    }
+
+    async disconnect(): Promise<void> {
+        for (const t of this.transports.values()) {
+            await t.disconnect();
+        }
+    }
+
+    getTransport(): BaseTransport {
+        return this.primaryTransport;
+    }
+
+    getTransportByType<T extends BaseTransport>(type: TransportType): T | undefined {
+        return this.transports.get(type) as T;
+    }
+
+    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+        const transport = this.selectBestRoute(nodeID);
+        return transport.send(nodeID, packet);
+    }
+
+    private selectBestRoute(nodeID: string): BaseTransport {
+        const node = this.node.registry.getNode(nodeID);
+        if (!node || !node.addresses) return this.primaryTransport;
+
+        for (const addr of node.addresses) {
+            const type = this.getAddressType(addr);
+            const t = this.transports.get(type);
+            if (t) return t;
+        }
+        return this.primaryTransport;
+    }
+
+    private getAddressType(address: string): TransportType {
+        if (address.startsWith('tcp://')) return 'tcp';
+        if (address.startsWith('ws://') || address.startsWith('wss://')) return 'ws';
+        if (address.startsWith('nats://')) return 'nats';
+        if (address.startsWith('http://') || address.startsWith('https://')) return 'http';
+        return 'ws';
+    }
+
+    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
+        await this.primaryTransport.publish(topic, data);
+    }
+
+    isConnected(): boolean {
+        return Array.from(this.transports.values()).some(t => t.isConnected());
+    }
+}
+import { BaseSerializer } from './BaseSerializer';
+
+export class BinarySerializer extends BaseSerializer {
+    readonly type = 'binary';
+    private encoder = new TextEncoder();
+    private decoder = new TextDecoder();
+
+    serialize(data: Record<string, unknown>): Uint8Array {
+        return this.encoder.encode(JSON.stringify(data));
+    }
+
+    deserialize(buf: Uint8Array | ArrayBuffer | string): Record<string, unknown> {
+        const str = typeof buf === 'string' ? buf : this.decoder.decode(buf);
+        return JSON.parse(str) as Record<string, unknown>;
+    }
+}
+import { BaseSerializer } from './BaseSerializer';
+
+/**
+ * JSONSerializer — standard JSON-based serialization.
+ */
+export class JSONSerializer extends BaseSerializer {
+    readonly type = 'json';
+    private encoder = new TextEncoder();
+    private decoder = new TextDecoder();
+
+    serialize(data: Record<string, unknown>): Uint8Array {
+        return this.encoder.encode(JSON.stringify(data));
+    }
+
+    deserialize(raw: Uint8Array | ArrayBuffer | string): Record<string, unknown> {
+        let str: string;
+
+        if (typeof raw === 'string') {
+            str = raw;
+        } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(raw)) {
+            str = (raw as Buffer).toString('utf-8');
+        } else {
+            str = this.decoder.decode(raw as Uint8Array | ArrayBuffer);
+        }
+
+        return JSON.parse(str) as Record<string, unknown>;
+    }
+
+    private isBuffer(raw: unknown): raw is { toString(enc: string): string } {
+        return typeof Buffer !== 'undefined' && Buffer.isBuffer(raw);
+    }
+}
+import { BaseSerializer } from './BaseSerializer';
+
+export class ProtoBufSerializer extends BaseSerializer {
+    readonly type = 'protobuf';
+    private encoder = new TextEncoder();
+    private decoder = new TextDecoder();
+
+    serialize(data: Record<string, unknown>): Uint8Array {
+        return this.encoder.encode(JSON.stringify(data));
+    }
+
+    deserialize(buf: Uint8Array | ArrayBuffer | string): Record<string, unknown> {
+        const str = typeof buf === 'string' ? buf : this.decoder.decode(buf);
+        return JSON.parse(str) as Record<string, unknown>;
+    }
+}
