@@ -148,7 +148,6 @@ export class TCPTransport extends BaseTransport {
         if (frame.length < 21) { (peer.socket as INodeSocket).destroy(); return; }
         
         const type = frame[0] as WirePacketType;
-        // Simplified for now
         const payload = frame.subarray(21);
 
         if (!peer.isAuthenticated && type !== WirePacketType.AUTH) { 
@@ -159,6 +158,11 @@ export class TCPTransport extends BaseTransport {
         switch (type) {
             case WirePacketType.AUTH:
                 await this.authHandler.handleAuth(peer, payload);
+                if (peer.isAuthenticated) this.startHeartbeat(peer);
+                break;
+            case WirePacketType.PING:
+                // Auto-reply with PONG (re-using AUTH type for now or same type)
+                (peer.socket as INodeSocket).write(TCPFrameCodec.encode(WirePacketType.PING, 'pong', new Uint8Array(0)));
                 break;
             case WirePacketType.RPC_REQ:
             case WirePacketType.RPC_RES:
@@ -168,6 +172,21 @@ export class TCPTransport extends BaseTransport {
                 } catch (err) { }
                 break;
         }
+    }
+
+    private startHeartbeat(peer: PeerState) {
+        const interval = setInterval(() => {
+            if (!this.peers.has(peer.nodeID!)) {
+                clearInterval(interval);
+                return;
+            }
+            try {
+                (peer.socket as INodeSocket).write(TCPFrameCodec.encode(WirePacketType.PING, 'ping', new Uint8Array(0)));
+            } catch (err) {
+                this.logger?.warn(`Heartbeat failed for ${peer.nodeID}`);
+                (peer.socket as INodeSocket).destroy();
+            }
+        }, 10000); // 10s heartbeat
     }
 
     async connectToPeer(nodeID: string, url: string): Promise<void> {

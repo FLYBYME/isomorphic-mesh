@@ -90,6 +90,7 @@ export enum WirePacketType {
     RPC_REQ = 0x02,
     RPC_RES = 0x03,
     PIECE_DATA = 0x04,
+    PING = 0x05,
 }
 
 export interface ITransportSocket {
