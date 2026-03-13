@@ -34,7 +34,8 @@ export class NetworkController {
                 type: (data.type as string) || 'unknown',
                 available: true,
                 timestamp: Date.now(),
-                capabilities: (data.capabilities as Record<string, unknown>) || {}
+                capabilities: (data.capabilities as Record<string, unknown>) || {},
+                services: (data.services as any[]) || []
             });
             this.logger.info('New node discovered', { remoteNodeID: nodeID });
         }

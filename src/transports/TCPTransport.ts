@@ -1,9 +1,10 @@
 import { BaseTransport } from './BaseTransport';
 import { BaseSerializer } from '../serializers/BaseSerializer';
-import { WirePacketType, PeerState, TransportConnectOptions, ITransportSocket } from '../types/mesh.types';
+import { WirePacketType, PeerState, TransportConnectOptions, ITransportSocket, ILogger, IServiceRegistry } from '../types/mesh.types';
 import { Env } from '../utils/Env';
 import { TCPFrameCodec } from './helpers/TCPFrameCodec';
 import { TCPAuthHandler } from './helpers/TCPAuthHandler';
+import { IsomorphicCrypto } from '../utils/Crypto';
 
 export interface INodeSocket extends ITransportSocket {
     on(event: string, cb: (data: any) => void): void;
@@ -12,11 +13,18 @@ export interface INodeSocket extends ITransportSocket {
     address(): { port: number };
 }
 
+/**
+ * TCPTransport — High-performance Node.js TCP transport with binary framing and Ed25519 auth.
+ */
 export class TCPTransport extends BaseTransport {
     readonly protocol = 'tcp';
     public server: { listen(port: number, cb: () => void): void; close(cb: () => void): void; on(ev: string, cb: any): void } | null = null;
     public peers = new Map<string, PeerState>();
     private authHandler: TCPAuthHandler;
+    
+    public privateKey?: string;
+    public registry?: IServiceRegistry;
+    public logger?: ILogger;
 
     constructor(serializer: BaseSerializer) {
         super(serializer);
@@ -32,6 +40,11 @@ export class TCPTransport extends BaseTransport {
         const net = eval('require')('node:net');
 
         this.nodeID = opts.nodeID;
+        this.logger = opts.logger;
+        // In a real scenario, privateKey would be part of opts or injected
+        this.privateKey = (opts as any).privateKey;
+        this.registry = (opts as any).registry;
+
         const port = opts.port || 4000;
 
         return new Promise((resolve, reject) => {
@@ -65,7 +78,7 @@ export class TCPTransport extends BaseTransport {
         const peer = this.peers.get(nodeID);
         if (!peer || !peer.isAuthenticated) throw new Error(`Target node ${nodeID} is not connected or authenticated`);
         
-        const type = (packet.type === 'response') ? WirePacketType.RPC_RES : WirePacketType.RPC_REQ;
+        const type = (packet.type === 'RESPONSE' || packet.type === 'RESPONSE_ERROR') ? WirePacketType.RPC_RES : WirePacketType.RPC_REQ;
         const payload = this.serializer.serialize(packet);
         const msgID = (packet.id as string || '0000000000000000').slice(0, 16).padEnd(16, '0');
         
@@ -74,7 +87,7 @@ export class TCPTransport extends BaseTransport {
     }
 
     async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        const payload = this.serializer.serialize({ topic, data, senderNodeID: this.nodeID });
+        const payload = this.serializer.serialize({ topic, data, senderNodeID: this.nodeID, type: 'EVENT' });
         const msgID = '0000000000000000';
         for (const peer of this.peers.values()) {
             if (peer.isAuthenticated) {
@@ -93,7 +106,9 @@ export class TCPTransport extends BaseTransport {
             bufferPot: new Uint8Array(0)
         };
 
-        const challenge = JSON.stringify({ type: 'challenge', nonce: Math.random().toString(36) });
+        // Send challenge to incoming connection
+        const nonce = IsomorphicCrypto.randomID(16);
+        const challenge = JSON.stringify({ type: 'challenge', nonce });
         socket.write(TCPFrameCodec.encode(WirePacketType.AUTH, 'handshake', new TextEncoder().encode(challenge)));
 
         socket.on('data', (chunk: Uint8Array) => this.processData(peer, chunk));
@@ -111,8 +126,10 @@ export class TCPTransport extends BaseTransport {
 
     private processData(peer: PeerState, chunk: Uint8Array) {
         const Buffer = eval('require')('buffer').Buffer;
+        // Efficient chunking: append to bufferPot
         peer.bufferPot = Buffer.concat([peer.bufferPot, chunk]);
         
+        // Handle potentially multiple frames in one data event or partial frames
         while (true) {
             const { frame, remaining } = TCPFrameCodec.decode(peer.bufferPot);
             if (!frame) break;
@@ -121,7 +138,7 @@ export class TCPTransport extends BaseTransport {
         }
     }
 
-    private dispatchFrame(peer: PeerState, frame: Uint8Array) {
+    private async dispatchFrame(peer: PeerState, frame: Uint8Array) {
         if (frame.length < 21) { (peer.socket as INodeSocket).destroy(); return; }
         
         const Buffer = eval('require')('buffer').Buffer;
@@ -131,18 +148,24 @@ export class TCPTransport extends BaseTransport {
         const msgID = buf.subarray(1, 17).toString('utf8').trim();
         const payload = buf.subarray(21);
 
-        if (!peer.isAuthenticated && type !== WirePacketType.AUTH) { (peer.socket as INodeSocket).destroy(); return; }
+        if (!peer.isAuthenticated && type !== WirePacketType.AUTH) { 
+            this.logger?.warn(`[TCPTransport] Unauthenticated frame received from ${peer.nodeID || 'unknown'}. Closing.`);
+            (peer.socket as INodeSocket).destroy(); 
+            return; 
+        }
 
         switch (type) {
             case WirePacketType.AUTH:
-                this.authHandler.handleAuth(peer, payload);
+                await this.authHandler.handleAuth(peer, payload);
                 break;
             case WirePacketType.RPC_REQ:
             case WirePacketType.RPC_RES:
                 try {
                     const packet = this.serializer.deserialize(payload);
                     this.emit('packet', packet);
-                } catch (err) { }
+                } catch (err) { 
+                    this.logger?.error(`[TCPTransport] Deserialization failed`, { error: err });
+                }
                 break;
         }
     }

@@ -7,30 +7,55 @@ export interface ILogger {
     child(context: Record<string, unknown>): ILogger;
 }
 
+export interface ActionInfo {
+    name?: string;
+    visibility: 'public' | 'user' | 'internal' | 'published' | 'protected' | 'private';
+    params?: Record<string, unknown>;
+    rest?: Record<string, unknown>;
+    roles?: string[];
+    matchAny?: boolean;
+}
+
+export interface EventInfo {
+    name?: string;
+    group?: string;
+}
+
 export interface ServiceInfo {
     name: string;
     fullName?: string;
-    version?: string;
-    settingsSchema?: unknown;
+    version?: string | number;
+    settingsSchema?: Record<string, unknown>;
+    dependencies?: string[];
+    actions?: Record<string, ActionInfo>;
+    events?: Record<string, EventInfo>;
+    metadata?: Record<string, unknown>;
+    rest?: Record<string, unknown>;
 }
 
 export interface NodeInfo {
     nodeID: string;
     hostname?: string;
     type: string;
+    nodeType?: string;
     namespace: string;
     addresses: string[];
-    trustLevel?: string;
+    trustLevel?: 'internal' | 'user' | 'public';
     available?: boolean;
     timestamp?: number;
     capabilities?: Record<string, unknown>;
     resources?: unknown;
     nodeSeq?: number;
-    services?: ServiceInfo[];
+    services: ServiceInfo[];
     pid?: number;
     parentID?: string;
     hidden?: boolean;
     metadata?: Record<string, unknown>;
+    cpu?: number;
+    activeRequests?: number;
+    healthScore?: number;
+    lastHeartbeatTime?: number;
+    publicKey?: string; // Ed25519 Public Key
 }
 
 export interface IServiceRegistry {
