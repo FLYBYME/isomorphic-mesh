@@ -8,6 +8,7 @@ import { WSTransport } from '../transports/WSTransport';
 import { NATSTransport } from '../transports/NATSTransport';
 import { IPCTransport } from '../transports/IPCTransport';
 import { TCPTransport } from '../transports/TCPTransport';
+import { MockTransport } from '../transports/MockTransport';
 import { TransportType, SerializerType } from '../types/mesh.types';
 
 /**
@@ -26,6 +27,7 @@ export class TransportFactory {
 
     static createTransport(type: TransportType, serializer: BaseSerializer, port: number): BaseTransport {
         switch (type) {
+            case 'mock': return new MockTransport(serializer);
             case 'tcp': return new TCPTransport(serializer);
             case 'http': return new HTTPTransport(serializer);
             case 'nats': return new NATSTransport(serializer);

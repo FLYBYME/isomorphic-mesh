@@ -1,54 +1,39 @@
 import { BaseTransport } from './BaseTransport';
-import { BaseSerializer } from '../serializers/BaseSerializer';
-import { TransportConnectOptions } from '../types/mesh.types';
 import { MeshPacket } from '../types/packet.types';
-
-export interface MockTransportConfig {
-    latency?: number; // ms
-    jitter?: number;  // 0-1
-    reliability?: number; // 0-1 (1 = 100% reliable)
-}
+import { TransportConnectOptions } from '../types/mesh.types';
 
 /**
- * MockTransport — A testing transport that simulates network conditions.
+ * MockTransport — A simple in-memory transport for testing.
+ * Uses a static map to simulate "The Network".
  */
 export class MockTransport extends BaseTransport {
     public readonly protocol = 'mock';
-    private mockConfig: MockTransportConfig;
-
-    constructor(serializer: BaseSerializer, config: MockTransportConfig = {}) {
-        super(serializer);
-        this.mockConfig = config;
-    }
+    private static instances = new Map<string, MockTransport>();
 
     async connect(opts: TransportConnectOptions): Promise<void> {
         this.nodeID = opts.nodeID;
+        MockTransport.instances.set(this.nodeID, this);
         this.connected = true;
-        this.emit('connected');
     }
 
     async disconnect(): Promise<void> {
+        MockTransport.instances.delete(this.nodeID);
         this.connected = false;
-        this.emit('disconnected');
     }
 
     async send(nodeID: string, packet: MeshPacket): Promise<void> {
-        // Simulate reliability
-        const reliability = this.mockConfig.reliability ?? 1;
-        if (Math.random() > reliability) {
-            return;
+        const target = MockTransport.instances.get(nodeID);
+        if (target) {
+            // Simulate async network latency
+            setTimeout(() => target.emit('packet', packet), 1);
         }
-
-        // Simulate latency
-        const latency = this.mockConfig.latency ?? 10;
-        const delay = latency + (Math.random() * (this.mockConfig.jitter ? this.mockConfig.jitter * 100 : 20));
-        
-        setTimeout(() => {
-            this.emit('message', { nodeID, packet });
-        }, delay);
     }
 
     async publish(topic: string, packet: MeshPacket): Promise<void> {
-        await this.send('all', packet);
+        for (const [nodeID, instance] of MockTransport.instances.entries()) {
+            if (nodeID !== this.nodeID) {
+                setTimeout(() => instance.emit('packet', packet), 1);
+            }
+        }
     }
 }

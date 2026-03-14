@@ -107,7 +107,7 @@ export interface PeerState {
     bufferPot: Uint8Array;
 }
 
-export type TransportType = 'ws' | 'http' | 'tcp' | 'ipc' | 'nats';
+export type TransportType = 'ws' | 'http' | 'tcp' | 'ipc' | 'nats' | 'mock';
 export type SerializerType = 'json' | 'binary' | 'protobuf';
 
 export interface TransportConnectOptions {

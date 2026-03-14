@@ -5,6 +5,7 @@ export * from './core/NetworkController';
 export * from './core/MeshOrchestrator';
 export * from './core/UnifiedServer';
 export * from './core/TransportFactory';
+export * from './interceptors/LogInterceptor';
 export * from './transports/BaseTransport';
 export * from './transports/node/WSTransport';
 export * from './transports/HTTPTransport'; // To be split
