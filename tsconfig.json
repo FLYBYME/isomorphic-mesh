@@ -10,7 +10,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
-    "composite": true
+    "baseUrl": ".",
+    "paths": {
+      "isomorphic-core": ["../isomorphic-core/src/index"],
+      "isomorphic-registry": ["../isomorphic-registry/src/index"],
+      "raft-consensus": ["../raft-consensus/src/index"]
+    }
   },
   "include": ["src/**/*"]
 }

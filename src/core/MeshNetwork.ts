@@ -7,6 +7,7 @@ import { UnifiedServer } from './UnifiedServer';
 import { IMeshNode, ILogger, IServiceRegistry } from '../types/mesh.types';
 import { MeshPacket } from '../types/packet.types';
 import { Env } from '../utils/Env';
+import { IInterceptor } from 'isomorphic-core';
 
 export interface MeshNetworkOptions extends TransportOptions {
     nodeId?: string;
@@ -29,6 +30,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
     public readonly orchestrator: MeshOrchestrator;
     public readonly server: UnifiedServer | null = null;
 
+    private interceptors: IInterceptor<MeshPacket, MeshPacket>[] = [];
+
     constructor(options: MeshNetworkOptions, logger: ILogger, registry: IServiceRegistry) {
         super();
         this.nodeId = options.nodeId || `node_${Math.random().toString(36).substr(2, 9)}`;
@@ -50,8 +53,21 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
         this.controller.registerHandlers(this.dispatcher);
 
         this.transport.on('packet', async (packet: MeshPacket) => {
-            await this.dispatcher.dispatch(packet);
+            let processedData = packet;
+
+            // Execute Inbound Pipeline (In REVERSE order)
+            for (const interceptor of [...this.interceptors].reverse()) {
+                if (interceptor.onInbound) {
+                    processedData = await interceptor.onInbound(processedData);
+                }
+            }
+            
+            await this.dispatcher.dispatch(processedData);
         });
+    }
+
+    public use(interceptor: IInterceptor<MeshPacket, MeshPacket>): void {
+        this.interceptors.push(interceptor);
     }
 
     async start(): Promise<void> {
@@ -73,28 +89,49 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
     }
 
     async send(nodeID: string, topicOrPacket: string | MeshPacket, data?: unknown): Promise<void> {
+        let packet: MeshPacket;
+        
         if (typeof topicOrPacket !== 'string') {
-            return this.transport.send(nodeID, topicOrPacket);
+            packet = topicOrPacket;
+        } else {
+            packet = {
+                topic: topicOrPacket,
+                data,
+                id: `mesh_${Math.random().toString(36).substr(2, 9)}`,
+                type: 'EVENT',
+                senderNodeID: this.nodeId,
+                timestamp: Date.now()
+            } as MeshPacket;
         }
-        return this.transport.send(nodeID, {
-            topic: topicOrPacket,
-            data,
-            id: `mesh_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'EVENT',
-            senderNodeID: this.nodeId,
-            timestamp: Date.now()
-        } as MeshPacket);
+
+        // Execute Outbound Pipeline (In order of registration)
+        for (const interceptor of this.interceptors) {
+            if (interceptor.onOutbound) {
+                packet = await interceptor.onOutbound(packet);
+            }
+        }
+
+        return this.transport.send(nodeID, packet);
     }
 
     async publish(topic: string, data: unknown): Promise<void> {
-        return this.transport.publish(topic, {
+        let packet: MeshPacket = {
             topic,
             data,
             id: `msg_${Math.random().toString(36).substr(2, 9)}`,
             type: 'EVENT',
             senderNodeID: this.nodeId,
             timestamp: Date.now()
-        } as MeshPacket);
+        } as MeshPacket;
+
+        // Execute Outbound Pipeline (In order of registration)
+        for (const interceptor of this.interceptors) {
+            if (interceptor.onOutbound) {
+                packet = await interceptor.onOutbound(packet);
+            }
+        }
+
+        return this.transport.publish(topic, packet);
     }
 
     onMessage(topic: string, handler: (data: unknown, packet: MeshPacket) => void): void {
