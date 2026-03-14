@@ -11,6 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
     "baseUrl": ".",
+    "composite": true,
     "paths": {
       "isomorphic-core": ["../isomorphic-core/src/index"],
       "isomorphic-registry": ["../isomorphic-registry/src/index"],

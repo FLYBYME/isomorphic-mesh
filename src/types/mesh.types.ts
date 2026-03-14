@@ -9,7 +9,7 @@ export interface ILogger {
 
 export interface ActionInfo {
     name?: string;
-    visibility: 'public' | 'user' | 'internal' | 'published' | 'protected' | 'private';
+    visibility?: 'public' | 'user' | 'internal' | 'published' | 'protected' | 'private';
     params?: Record<string, unknown>;
     rest?: Record<string, unknown>;
     roles?: string[];
