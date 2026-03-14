@@ -8,11 +8,11 @@ export class JSONSerializer extends BaseSerializer {
     private encoder = new TextEncoder();
     private decoder = new TextDecoder();
 
-    serialize(data: Record<string, unknown>): Uint8Array {
+    serialize(data: unknown): Uint8Array {
         return this.encoder.encode(JSON.stringify(data));
     }
 
-    deserialize(raw: Uint8Array | ArrayBuffer | string): Record<string, unknown> {
+    deserialize(raw: Uint8Array | ArrayBuffer | string): unknown {
         let str: string;
 
         if (typeof raw === 'string') {
@@ -23,7 +23,7 @@ export class JSONSerializer extends BaseSerializer {
             str = this.decoder.decode(raw as Uint8Array | ArrayBuffer);
         }
 
-        return JSON.parse(str) as Record<string, unknown>;
+        return JSON.parse(str) as unknown;
     }
 
     private isBuffer(raw: unknown): raw is { toString(enc: string): string } {

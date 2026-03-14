@@ -45,14 +45,21 @@ describe('MeshNetwork Smoke Test', () => {
             host: '127.0.0.1'
         }, logger, registry);
 
-        mesh.onMessage('test-topic', (data) => {
+        mesh.onMessage('test-topic', (data: any) => {
             expect(data.hello).toBe('world');
             mesh.stop().then(() => done());
         });
 
         mesh.start().then(() => {
             // Manually simulate an incoming packet
-            mesh.transport.emit('packet', { topic: 'test-topic', data: { hello: 'world' } });
+            mesh.transport.emit('packet', { 
+                topic: 'test-topic', 
+                data: { hello: 'world' },
+                id: 'test-id',
+                type: 'EVENT',
+                senderNodeID: 'remote-node',
+                timestamp: Date.now()
+            });
         });
     });
 });

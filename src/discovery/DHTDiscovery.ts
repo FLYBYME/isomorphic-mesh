@@ -1,4 +1,5 @@
-import { ILogger, TransportEnvelope } from '../types/mesh.types';
+import { ILogger } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 
 export interface DHTDiscoveryOptions {
     nodeID: string;

@@ -2,14 +2,16 @@ import { BaseTransport } from '../BaseTransport';
 import { BaseSerializer } from '../../serializers/BaseSerializer';
 import { ILogger, TransportConnectOptions, ITransportSocket } from '../../types/mesh.types';
 import { nanoid } from 'nanoid';
+import { MeshPacket } from '../../types/packet.types';
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 export interface IWS extends ITransportSocket {
-    on(event: string, cb: (...args: any[]) => void): void;
+    on(event: string, cb: (...args: unknown[]) => void): void;
     terminate?(): void;
     readyState: number;
     ping?(): void;
+    close(): void;
 }
 
 export interface IWSServer {
@@ -18,8 +20,8 @@ export interface IWSServer {
 }
 
 interface PendingRPC {
-    resolve: (value: any) => void;
-    reject: (reason: any) => void;
+    resolve: (value: unknown) => void;
+    reject: (reason: unknown) => void;
     timeout: NodeJS.Timeout;
 }
 
@@ -30,7 +32,7 @@ export class WSTransport extends BaseTransport {
     readonly protocol = 'ws';
 
     private wss: IWSServer | null = null;
-    private server: any | null = null;
+    private server: http.Server | null = null;
     private port: number;
     private peers = new Map<string, IWS>();
     public logger?: ILogger;
@@ -51,12 +53,12 @@ export class WSTransport extends BaseTransport {
         this.logger = opts.logger;
 
         if (opts.sharedServer) {
-            return this.attachToSharedServer(opts.sharedServer);
+            return this.attachToSharedServer(opts.sharedServer as http.Server);
         }
         return this.startNodeServer();
     }
 
-    private async attachToSharedServer(server: any): Promise<void> {
+    private async attachToSharedServer(server: http.Server): Promise<void> {
         this.server = server;
         this.wss = new WebSocketServer({ server: this.server }) as unknown as IWSServer;
         this.setupWSSHandlers();
@@ -111,8 +113,9 @@ export class WSTransport extends BaseTransport {
     private handleIncomingMessage(raw: unknown, socket: IWS, onIdentify?: (id: string) => void) {
         try {
             const payloadString = this.decodePayload(raw);
-            const envelope = this.serializer.deserialize(payloadString) as any;
-            const { topic, data, senderId, id, type } = envelope;
+            const envelope = this.serializer.deserialize(payloadString) as MeshPacket;
+            const { topic, data, id, type, senderNodeID } = envelope as any;
+            const senderId = senderNodeID;
 
             if (senderId && onIdentify) {
                 onIdentify(senderId);
@@ -166,18 +169,18 @@ export class WSTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         const ws = this.peers.get(nodeID);
         if (!ws || ws.readyState !== 1) {
             throw new Error(`Connection to node ${nodeID} is not open`);
         }
 
         const correlationId = (packet.id as string) || nanoid();
-        const buf = this.serializer.serialize({ ...packet, senderId: this.nodeID, id: correlationId });
+        const buf = this.serializer.serialize({ ...packet, senderNodeID: this.nodeID, id: correlationId });
         ws.send(new TextDecoder().decode(buf));
     }
 
-    async call(nodeID: string, topic: string, data: Record<string, unknown>): Promise<any> {
+    async call(nodeID: string, topic: string, data: Record<string, unknown>): Promise<unknown> {
         const id = nanoid();
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -189,7 +192,14 @@ export class WSTransport extends BaseTransport {
 
             this.pendingRPCs.set(id, { resolve, reject, timeout });
 
-            this.send(nodeID, { topic, data, id, type: 'CALL' }).catch(err => {
+            this.send(nodeID, { 
+                topic, 
+                data, 
+                id, 
+                type: 'REQUEST',
+                senderNodeID: this.nodeID,
+                timestamp: Date.now()
+            }).catch(err => {
                 clearTimeout(timeout);
                 this.pendingRPCs.delete(id);
                 reject(err);
@@ -197,8 +207,15 @@ export class WSTransport extends BaseTransport {
         });
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        const buf = this.serializer.serialize({ topic, data, senderId: this.nodeID, type: 'EVENT' });
+    async publish(topic: string, data: unknown): Promise<void> {
+        const buf = this.serializer.serialize({ 
+            topic, 
+            data, 
+            senderNodeID: this.nodeID, 
+            type: 'EVENT',
+            id: `msg_${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: Date.now()
+        });
         const payload = new TextDecoder().decode(buf);
         for (const ws of this.peers.values()) {
             if (ws.readyState === 1) {

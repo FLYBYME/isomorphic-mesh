@@ -1,6 +1,7 @@
 import { BaseTransport } from '../BaseTransport';
 import { BaseSerializer } from '../../serializers/BaseSerializer';
 import { TransportConnectOptions } from '../../types/mesh.types';
+import { MeshPacket } from '../../types/packet.types';
 
 /**
  * HTTPTransport — Browser implementation using fetch.
@@ -23,7 +24,7 @@ export class HTTPTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         const address = this.peerAddresses.get(nodeID);
         if (!address) throw new Error(`No address for node ${nodeID}`);
 
@@ -36,7 +37,7 @@ export class HTTPTransport extends BaseTransport {
         if (!response.ok) throw new Error(`HTTP send failed: ${response.status}`);
     }
 
-    async publish(_topic: string, _data: Record<string, unknown>): Promise<void> {
+    async publish(_topic: string, _packet: MeshPacket): Promise<void> {
         // SSE not implemented in browser stub
     }
 

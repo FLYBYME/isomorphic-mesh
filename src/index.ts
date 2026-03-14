@@ -20,4 +20,5 @@ export * from './types/mesh.types';
 export * from './utils/Env';
 export * from './utils/Crypto';
 export * from './contracts/packet.schema';
+export * from './types/packet.types';
 export * from './transports/browser/index';

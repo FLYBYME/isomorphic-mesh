@@ -1,13 +1,15 @@
 import { BaseTransport } from '../BaseTransport';
 import { BaseSerializer } from '../../serializers/BaseSerializer';
 import { TransportConnectOptions } from '../../types/mesh.types';
+import { Worker, MessagePort } from 'node:worker_threads';
+import { MeshPacket } from '../../types/packet.types';
 
 /**
  * IPCTransport — Node.js implementation using 'node:worker_threads'.
  */
 export class IPCTransport extends BaseTransport {
     readonly protocol = 'ipc';
-    private workers = new Map<string, any>();
+    private workers = new Map<string, Worker>();
     private isWorker = false;
 
     constructor(serializer: BaseSerializer) {
@@ -19,7 +21,7 @@ export class IPCTransport extends BaseTransport {
     async connect(_opts: TransportConnectOptions): Promise<void> {
         const { parentPort } = eval('require')('node:worker_threads');
         if (this.isWorker && parentPort) {
-            parentPort.on('message', (raw: any) => this.handleIncoming(raw));
+            parentPort.on('message', (raw: unknown) => this.handleIncoming(raw));
         }
         this.connected = true;
         this.emit('connected');
@@ -35,16 +37,16 @@ export class IPCTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
-    registerWorker(nodeID: string, worker: any): void {
+    registerWorker(nodeID: string, worker: Worker): void {
         this.workers.set(nodeID, worker);
-        worker.on('message', (raw: any) => {
+        worker.on('message', (raw: unknown) => {
             if (raw && typeof raw === 'object' && 'topic' in raw) {
                 this.handleIncoming(raw);
             }
         });
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         const envelope = { topic: '__direct', data: packet, senderNodeID: this.nodeID };
         const target = this.workers.get(nodeID);
         if (target) {
@@ -58,24 +60,23 @@ export class IPCTransport extends BaseTransport {
         }
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        const envelope = { topic, data, senderNodeID: this.nodeID };
-        const { parentPort } = eval('require')('node:worker_threads');
+    async publish(topic: string, packet: MeshPacket): Promise<void> {
+        const { parentPort } = eval('require')('node:worker_threads') as { parentPort: MessagePort | null };
         if (this.isWorker && parentPort) {
-            parentPort.postMessage(envelope);
+            parentPort.postMessage(packet);
         } else {
             for (const worker of this.workers.values()) {
-                worker.postMessage(envelope);
+                worker.postMessage(packet);
             }
         }
         const handlers = this.subscriptions.get(topic) || [];
-        for (const handler of handlers) handler(data);
+        for (const handler of handlers) handler((packet as any).data ?? packet);
     }
 
-    private handleIncoming(raw: any): void {
-        const { topic, data } = raw;
+    private handleIncoming(raw: unknown): void {
+        const { topic, data } = raw as { topic: string, data: unknown };
         const handlers = this.subscriptions.get(topic) || [];
         for (const handler of handlers) handler(data);
-        this.emit('packet', raw);
+        this.emit('packet', raw as MeshPacket);
     }
 }

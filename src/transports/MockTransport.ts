@@ -1,6 +1,7 @@
 import { BaseTransport } from './BaseTransport';
 import { BaseSerializer } from '../serializers/BaseSerializer';
 import { TransportConnectOptions } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 
 export interface MockTransportConfig {
     latency?: number; // ms
@@ -31,7 +32,7 @@ export class MockTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         // Simulate reliability
         const reliability = this.mockConfig.reliability ?? 1;
         if (Math.random() > reliability) {
@@ -47,7 +48,7 @@ export class MockTransport extends BaseTransport {
         }, delay);
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        await this.send('all', data);
+    async publish(topic: string, packet: MeshPacket): Promise<void> {
+        await this.send('all', packet);
     }
 }

@@ -122,12 +122,3 @@ export interface TransportConnectOptions {
     logger?: ILogger;
 }
 
-export interface TransportEnvelope {
-    topic: string;
-    data: Record<string, unknown>;
-    senderNodeID: string;
-    timestamp?: number;
-    id?: string;
-    type?: string;
-    meta?: Record<string, unknown>;
-}

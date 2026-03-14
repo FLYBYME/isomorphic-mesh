@@ -2,6 +2,8 @@ import { BaseTransport } from '../BaseTransport';
 import { BaseSerializer } from '../../serializers/BaseSerializer';
 import { TransportConnectOptions } from '../../types/mesh.types';
 
+import { MeshPacket } from '../../types/packet.types';
+
 /**
  * TCPTransport — Browser stub (TCP not supported in browsers).
  */
@@ -20,11 +22,11 @@ export class TCPTransport extends BaseTransport {
         // No-op
     }
 
-    async send(_nodeID: string, _packet: Record<string, unknown>): Promise<void> {
+    async send(_nodeID: string, _packet: MeshPacket): Promise<void> {
         throw new Error('TCPTransport is not supported in the browser environment.');
     }
 
-    async publish(_topic: string, _data: Record<string, unknown>): Promise<void> {
+    async publish(_topic: string, _packet: MeshPacket): Promise<void> {
         throw new Error('TCPTransport is not supported in the browser environment.');
     }
 }

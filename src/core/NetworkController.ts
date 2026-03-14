@@ -1,4 +1,5 @@
-import { IMeshNode, ILogger, TransportEnvelope } from '../types/mesh.types';
+import { IMeshNode, ILogger } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 import { NetworkDispatcher } from './NetworkDispatcher';
 
 /**
@@ -25,7 +26,7 @@ export class NetworkController {
         dispatcher.on('$rpc.response', this.handleRPCResponse.bind(this));
     }
 
-    private async handleNodeInfo(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handleNodeInfo(data: any, packet: MeshPacket): Promise<void> {
         const nodeID = data.nodeID as string;
         if (nodeID && nodeID !== this.node.nodeId) {
             this.node.registry.registerNode({
@@ -42,39 +43,39 @@ export class NetworkController {
         }
     }
 
-    private async handleNodeHeartbeat(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handleNodeHeartbeat(data: any, packet: MeshPacket): Promise<void> {
         const nodeID = data.nodeID as string;
         if (nodeID && nodeID !== this.node.nodeId) {
             this.node.registry.heartbeat(nodeID, data);
         }
     }
 
-    private async handleNodeDisconnect(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handleNodeDisconnect(data: any, packet: MeshPacket): Promise<void> {
         const nodeID = data.nodeID as string;
         if (nodeID && nodeID !== this.node.nodeId) {
             this.node.registry.unregisterNode(nodeID);
         }
     }
 
-    private async handlePing(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handlePing(data: any, packet: MeshPacket): Promise<void> {
         // Echo back a pong with same ID
         if (packet.id) {
             (this.node as any).publish('$node.pong', { id: packet.id, timestamp: Date.now() });
         }
     }
 
-    private async handlePEX(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handlePEX(data: any, packet: MeshPacket): Promise<void> {
         const orchestrator = (this.node as any).orchestrator;
         if (orchestrator) {
             await orchestrator.handlePEX(data);
         }
     }
 
-    private async handleRPCRequest(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handleRPCRequest(data: any, packet: MeshPacket): Promise<void> {
         this.node.logger.debug('Incoming RPC request', { action: data.action as string });
     }
 
-    private async handleRPCResponse(data: Record<string, unknown>, packet: TransportEnvelope): Promise<void> {
+    private async handleRPCResponse(data: any, packet: MeshPacket): Promise<void> {
         // Handled by Transport internally if it has correlation logic
     }
 }

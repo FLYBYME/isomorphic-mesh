@@ -18,10 +18,19 @@ jest.mock('net', () => ({
         end: jest.fn(),
         destroy: jest.fn()
     }),
-    createServer: jest.fn().mockReturnValue({ listen: jest.fn(), on: jest.fn(), close: jest.fn() })
+    createServer: jest.fn().mockReturnValue({ 
+        listen: jest.fn().mockImplementation((opts, cb) => cb && cb()), 
+        on: jest.fn(), 
+        close: jest.fn().mockImplementation((cb) => cb && cb()) 
+    })
 }));
 jest.mock('http', () => ({
-    createServer: jest.fn().mockReturnValue({ listen: jest.fn(), on: jest.fn(), address: () => ({port: 1234}) }),
+    createServer: jest.fn().mockReturnValue({ 
+        listen: jest.fn().mockImplementation((port, cb) => cb && cb()), 
+        on: jest.fn(), 
+        address: () => ({port: 1234}),
+        close: jest.fn().mockImplementation((cb) => cb && cb())
+    }),
     request: jest.fn().mockReturnValue({ on: jest.fn(), write: jest.fn(), end: jest.fn() })
 }));
 
@@ -31,22 +40,45 @@ describe('Coverage', () => {
         serializer = new JSONSerializer();
         jest.spyOn(Env, 'isBrowser').mockReturnValue(true);
         (global as any).indexedDB = {
-            open: jest.fn().mockReturnValue({
-                onupgradeneeded: null,
-                onsuccess: null,
-                onerror: null,
-                result: {
-                    objectStoreNames: { contains: jest.fn().mockReturnValue(false) },
-                    createObjectStore: jest.fn(),
-                    transaction: jest.fn().mockReturnValue({
-                        objectStore: jest.fn().mockReturnValue({
-                            add: jest.fn().mockReturnValue({ onsuccess: null, onerror: null }),
-                            getAll: jest.fn().mockReturnValue({ onsuccess: null, onerror: null }),
-                            delete: jest.fn().mockReturnValue({ onsuccess: null, onerror: null }),
-                            clear: jest.fn().mockReturnValue({ onsuccess: null, onerror: null })
+            open: jest.fn().mockImplementation(() => {
+                const req: any = {
+                    onsuccess: null,
+                    onupgradeneeded: null,
+                    onerror: null,
+                    result: {
+                        objectStoreNames: { contains: jest.fn().mockReturnValue(false) },
+                        createObjectStore: jest.fn(),
+                        transaction: jest.fn().mockReturnValue({
+                            objectStore: jest.fn().mockReturnValue({
+                                add: jest.fn().mockImplementation(() => {
+                                    const req: any = { onsuccess: null, onerror: null };
+                                    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+                                    return req;
+                                }),
+                                getAll: jest.fn().mockImplementation(() => {
+                                    const req: any = { onsuccess: null, onerror: null, result: [] };
+                                    setTimeout(() => req.onsuccess && req.onsuccess({ target: req }), 0);
+                                    return req;
+                                }),
+                                delete: jest.fn().mockImplementation(() => {
+                                    const req: any = { onsuccess: null, onerror: null };
+                                    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+                                    return req;
+                                }),
+                                clear: jest.fn().mockImplementation(() => {
+                                    const req: any = { onsuccess: null, onerror: null };
+                                    setTimeout(() => req.onsuccess && req.onsuccess(), 0);
+                                    return req;
+                                })
+                            })
                         })
-                    })
-                }
+                    }
+                };
+                setTimeout(() => {
+                    if (req.onupgradeneeded) req.onupgradeneeded({ target: req });
+                    if (req.onsuccess) req.onsuccess({ target: req });
+                }, 0);
+                return req;
             })
         };
     });
@@ -172,18 +204,22 @@ describe('Coverage', () => {
         const t = new IPCTransport(serializer) as any;
         t.logger = { error: jest.fn(), warn: jest.fn() };
         
-        const mockSocket = { write: jest.fn(), on: jest.fn(), end: jest.fn(), destroy: jest.fn() };
-        t.peerAddresses.set('n2', mockSocket);
+        const mockWorker = { 
+            postMessage: jest.fn(), 
+            on: jest.fn(),
+            removeListener: jest.fn(),
+            removeAllListeners: jest.fn(),
+            terminate: jest.fn() 
+        };
+        t.workers.set('n2', mockWorker);
 
-        try { await t.connect({ url: 'ipc:///tmp/test.sock', nodeID: 'n1' }); } catch(e) {}
+        try { await t.connect({ nodeID: 'n1' }); } catch(e) {}
         try { await t.send('n2', { a: 1 }); } catch(e) {}
         try { await t.publish('topic', { a: 1 }); } catch(e) {}
         
-        try { t.handleConnection(mockSocket); } catch(e) {}
-        try { t.processData('n2', mockSocket, Buffer.from(JSON.stringify({type: 'HANDSHAKE', senderId: 'n2'}) + '\\n')); } catch(e) {}
-        try { t.processData('n2', mockSocket, Buffer.from(JSON.stringify({type: 'PING'}) + '\\n')); } catch(e) {}
-        
-        try { await t.connectToPeer('n3', 'ipc:///tmp/test2.sock'); } catch(e) {}
+        try { t.registerWorker('n2', mockWorker); } catch(e) {}
+        try { t.handleIncoming({ topic: 't', data: {} }); } catch(e) {}
+        try { await t.disconnect(); } catch(e) {}
     });
 
     it('HTTPTransport coverage', async () => {

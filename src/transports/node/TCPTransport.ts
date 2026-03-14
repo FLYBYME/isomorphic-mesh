@@ -4,13 +4,14 @@ import { WirePacketType, PeerState, TransportConnectOptions, ITransportSocket, I
 import { TCPFrameCodec } from '../helpers/TCPFrameCodec';
 import { TCPAuthHandler } from '../helpers/TCPAuthHandler';
 import { IsomorphicCrypto } from '../../utils/Crypto';
+import { MeshPacket } from '../../types/packet.types';
 import net from 'node:net';
 
 export interface INodeSocket extends ITransportSocket {
-    on(event: string, cb: (data: any) => void): void;
+    on(event: string, cb: (data: unknown) => void): void;
     write(data: Uint8Array): void;
     destroy(): void;
-    address(): any;
+    address(): unknown;
 }
 
 /**
@@ -38,13 +39,13 @@ export class TCPTransport extends BaseTransport {
     async connect(opts: TransportConnectOptions): Promise<void> {
         this.nodeID = opts.nodeID;
         this.logger = opts.logger;
-        this.privateKey = (opts as any).privateKey;
-        this.registry = (opts as any).registry;
+        this.privateKey = (opts as unknown as { privateKey: string }).privateKey;
+        this.registry = (opts as unknown as { registry: IServiceRegistry }).registry;
 
         const port = opts.port || 4000;
 
         return new Promise((resolve, reject) => {
-            this.server = net.createServer((socket: any) => this.handleConnection(socket as INodeSocket));
+            this.server = net.createServer((socket: net.Socket) => this.handleConnection(socket as unknown as INodeSocket));
             this.server.on('error', (err: Error) => {
                 this.emit('error', err);
                 reject(err);
@@ -70,7 +71,7 @@ export class TCPTransport extends BaseTransport {
         });
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         const peer = this.peers.get(nodeID);
         if (!peer || !peer.isAuthenticated) throw new Error(`Target node ${nodeID} is not connected or authenticated`);
         
@@ -82,7 +83,7 @@ export class TCPTransport extends BaseTransport {
         (peer.socket as INodeSocket).write(frame);
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
+    async publish(topic: string, data: unknown): Promise<void> {
         const payload = this.serializer.serialize({ topic, data, senderNodeID: this.nodeID, type: 'EVENT' });
         const msgID = '0000000000000000';
         for (const peer of this.peers.values()) {
@@ -106,15 +107,17 @@ export class TCPTransport extends BaseTransport {
         const challenge = JSON.stringify({ type: 'challenge', nonce });
         socket.write(TCPFrameCodec.encode(WirePacketType.AUTH, 'handshake', new TextEncoder().encode(challenge)));
 
-        socket.on('data', (chunk: Uint8Array) => this.processData(peer, chunk));
+        socket.on('data', (chunk: unknown) => this.processData(peer, chunk as Uint8Array));
         socket.on('end', () => {
             if (peer.nodeID) {
                 this.peers.delete(peer.nodeID);
                 this.emit('peer:disconnect', peer.nodeID);
             }
         });
-        socket.on('error', (err: Error) => {
-            this.emit('error', err);
+        socket.on('error', (err: unknown) => {
+            if (err instanceof Error) {
+                this.emit('error', err);
+            }
             socket.destroy();
         });
     }
@@ -138,8 +141,8 @@ export class TCPTransport extends BaseTransport {
                 peer.bufferPot = remaining;
                 this.dispatchFrame(peer, frame);
             }
-        } catch (err: any) {
-            this.logger?.error(`[TCPTransport] Framing error: ${err.message}`);
+        } catch (err: unknown) {
+            this.logger?.error(`[TCPTransport] Framing error: ${err instanceof Error ? err.message : String(err)}`);
             (peer.socket as INodeSocket).destroy();
         }
     }
@@ -167,7 +170,7 @@ export class TCPTransport extends BaseTransport {
             case WirePacketType.RPC_REQ:
             case WirePacketType.RPC_RES:
                 try {
-                    const packet = this.serializer.deserialize(payload);
+                    const packet = this.serializer.deserialize(payload) as unknown as MeshPacket;
                     this.emit('packet', packet);
                 } catch (err) { }
                 break;
@@ -201,7 +204,7 @@ export class TCPTransport extends BaseTransport {
                     bufferPot: new Uint8Array(0)
                 };
                 
-                socket.on('data', (chunk: Uint8Array) => this.processData(peer, chunk));
+                socket.on('data', (chunk: unknown) => this.processData(peer, chunk as Uint8Array));
                 socket.on('end', () => {
                     this.peers.delete(nodeID);
                     this.emit('peer:disconnect', nodeID);

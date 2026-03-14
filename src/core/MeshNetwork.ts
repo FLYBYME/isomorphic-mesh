@@ -4,7 +4,8 @@ import { NetworkDispatcher } from './NetworkDispatcher';
 import { NetworkController } from './NetworkController';
 import { MeshOrchestrator } from './MeshOrchestrator';
 import { UnifiedServer } from './UnifiedServer';
-import { IMeshNode, ILogger, IServiceRegistry, TransportEnvelope } from '../types/mesh.types';
+import { IMeshNode, ILogger, IServiceRegistry } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 import { Env } from '../utils/Env';
 
 export interface MeshNetworkOptions extends TransportOptions {
@@ -48,8 +49,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
 
         this.controller.registerHandlers(this.dispatcher);
 
-        this.transport.on('packet', async (packet: unknown) => {
-            await this.dispatcher.dispatch(packet as TransportEnvelope);
+        this.transport.on('packet', async (packet: MeshPacket) => {
+            await this.dispatcher.dispatch(packet);
         });
     }
 
@@ -71,16 +72,33 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
         this.emit('stopped');
     }
 
-    async send(nodeID: string, topic: string, data: Record<string, unknown>): Promise<void> {
-        return this.transport.send(nodeID, { topic, data, senderNodeID: this.nodeId });
+    async send(nodeID: string, topicOrPacket: string | MeshPacket, data?: unknown): Promise<void> {
+        if (typeof topicOrPacket !== 'string') {
+            return this.transport.send(nodeID, topicOrPacket);
+        }
+        return this.transport.send(nodeID, {
+            topic: topicOrPacket,
+            data,
+            id: `mesh_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'EVENT',
+            senderNodeID: this.nodeId,
+            timestamp: Date.now()
+        } as MeshPacket);
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        return this.transport.publish(topic, data);
+    async publish(topic: string, data: unknown): Promise<void> {
+        return this.transport.publish(topic, {
+            topic,
+            data,
+            id: `msg_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'EVENT',
+            senderNodeID: this.nodeId,
+            timestamp: Date.now()
+        } as MeshPacket);
     }
 
-    onMessage(topic: string, handler: (data: Record<string, unknown>, packet: TransportEnvelope) => void): void {
-        this.dispatcher.on(topic, handler);
+    onMessage(topic: string, handler: (data: unknown, packet: MeshPacket) => void): void {
+        this.dispatcher.on(topic, handler as any);
     }
 
     getConfig(): Record<string, unknown> {

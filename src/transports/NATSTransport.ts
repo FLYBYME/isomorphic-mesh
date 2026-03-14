@@ -1,6 +1,7 @@
 import { BaseTransport } from './BaseTransport';
 import { BaseSerializer } from '../serializers/BaseSerializer';
 import { TransportConnectOptions } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 
 export interface INatsConnection {
     closed(): Promise<Error | void>;
@@ -44,7 +45,7 @@ export class NATSTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         await this.publish(`mesh.${nodeID}`, packet);
     }
 
@@ -68,9 +69,9 @@ export class NATSTransport extends BaseTransport {
         })();
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
+    async publish(topic: string, packet: MeshPacket): Promise<void> {
         if (!this.client) return;
-        const buf = this.serializer.serialize(data);
+        const buf = this.serializer.serialize(packet);
         this.client.publish(topic, buf);
     }
 }

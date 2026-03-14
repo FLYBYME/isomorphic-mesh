@@ -3,6 +3,7 @@ import { BaseTransport } from '../transports/BaseTransport';
 import { BaseSerializer } from '../serializers/BaseSerializer';
 import { TransportFactory } from './TransportFactory';
 import { IMeshNode, TransportType, SerializerType, TransportConnectOptions } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 
 export interface TransportOptions {
     transportType: TransportType | TransportType[];
@@ -25,7 +26,7 @@ export class TransportManager extends EventEmitter {
 
         for (const type of types) {
             const transport = TransportFactory.createTransport(type, this.serializer, options.port);
-            transport.on('packet', (envelope: Record<string, unknown>) => this.emit('packet', envelope));
+            transport.on('packet', (envelope: MeshPacket) => this.emit('packet', envelope));
             this.transports.set(type, transport);
         }
 
@@ -58,7 +59,7 @@ export class TransportManager extends EventEmitter {
         return this.transports.get(type) as T;
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         const transport = this.selectBestRoute(nodeID);
         return transport.send(nodeID, packet);
     }
@@ -83,8 +84,8 @@ export class TransportManager extends EventEmitter {
         return 'ws';
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        await this.primaryTransport.publish(topic, data);
+    async publish(topic: string, packet: MeshPacket): Promise<void> {
+        await this.primaryTransport.publish(topic, packet);
     }
 
     isConnected(): boolean {

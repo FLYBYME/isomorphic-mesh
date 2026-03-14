@@ -3,6 +3,7 @@ import { BaseSerializer } from '../../serializers/BaseSerializer';
 import { ILogger, TransportConnectOptions, ITransportSocket } from '../../types/mesh.types';
 import { nanoid } from 'nanoid';
 import { OfflineStorageEngine } from '../../utils/OfflineStorageEngine';
+import { MeshPacket } from '../../types/packet.types';
 
 export interface IWS extends ITransportSocket {
     readyState: number;
@@ -56,11 +57,11 @@ export class WSTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
-    async send(nodeID: string, packet: Record<string, unknown>): Promise<void> {
+    async send(nodeID: string, packet: MeshPacket): Promise<void> {
         const ws = this.peers.get(nodeID) || this.ws;
         
         if (!ws || ws.readyState !== 1) {
-            if (packet.type === 'CALL') {
+            if (packet.type === 'REQUEST') {
                 await this.offlineStorage.queue({
                     id: (packet.id as string) || nanoid(),
                     targetId: nodeID,
@@ -74,7 +75,7 @@ export class WSTransport extends BaseTransport {
         }
 
         const correlationId = (packet.id as string) || nanoid();
-        const buf = this.serializer.serialize({ ...packet, senderId: this.nodeID, id: correlationId });
+        const buf = this.serializer.serialize({ ...packet, senderNodeID: this.nodeID, id: correlationId });
         ws.send(new TextDecoder().decode(buf));
     }
 
@@ -90,7 +91,7 @@ export class WSTransport extends BaseTransport {
 
             this.pendingRPCs.set(id, { resolve, reject, timeout });
 
-            this.send(nodeID, { topic, data, id, type: 'CALL' }).catch(err => {
+            this.send(nodeID, { topic, data, id, type: 'REQUEST', senderNodeID: this.nodeID, timestamp: Date.now() }).catch(err => {
                 clearTimeout(timeout);
                 this.pendingRPCs.delete(id);
                 reject(err);
@@ -98,8 +99,8 @@ export class WSTransport extends BaseTransport {
         });
     }
 
-    async publish(topic: string, data: Record<string, unknown>): Promise<void> {
-        const buf = this.serializer.serialize({ topic, data, senderId: this.nodeID, type: 'EVENT' });
+    async publish(topic: string, packet: MeshPacket): Promise<void> {
+        const buf = this.serializer.serialize(packet);
         const payload = new TextDecoder().decode(buf);
         if (this.ws && this.ws.readyState === 1) {
             this.ws.send(payload);
@@ -145,8 +146,8 @@ export class WSTransport extends BaseTransport {
 
     private handleIncomingMessage(raw: any, _socket: WebSocket) {
         try {
-            const envelope = this.serializer.deserialize(raw) as any;
-            const { topic, data, id, type } = envelope;
+            const envelope = this.serializer.deserialize(raw) as MeshPacket;
+            const { topic, data, id, type, senderNodeID } = envelope as any;
 
             if (type === 'RESPONSE' || type === 'RESPONSE_ERROR') {
                 const pending = this.pendingRPCs.get(id);
@@ -180,7 +181,9 @@ export class WSTransport extends BaseTransport {
                     id: rpc.id,
                     topic: rpc.topic,
                     data: rpc.data,
-                    type: 'CALL'
+                    type: 'REQUEST',
+                    senderNodeID: this.nodeID,
+                    timestamp: rpc.timestamp
                 }).then(() => {
                     this.offlineStorage.remove(rpc.id);
                 }).catch(() => { });

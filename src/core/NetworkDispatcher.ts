@@ -1,6 +1,7 @@
-import { ILogger, TransportEnvelope } from '../types/mesh.types';
+import { ILogger } from '../types/mesh.types';
+import { MeshPacket } from '../types/packet.types';
 
-export type NetworkHandler = (data: Record<string, unknown>, packet: TransportEnvelope) => void | Promise<void>;
+export type NetworkHandler = (data: any, packet: MeshPacket) => void | Promise<void>;
 
 interface RateLimitInfo {
     count: number;
@@ -36,7 +37,7 @@ export class NetworkDispatcher {
     /**
      * Dispatch an incoming packet to the registered handlers.
      */
-    async dispatch(packet: TransportEnvelope): Promise<void> {
+    async dispatch(packet: MeshPacket): Promise<void> {
         // 1. Rate Limiting Middleware
         if (packet.senderNodeID && !this.checkRateLimit(packet.senderNodeID)) {
             this.logger.warn(`[NetworkDispatcher] Rate limit exceeded for node: ${packet.senderNodeID}`);
@@ -44,11 +45,11 @@ export class NetworkDispatcher {
         }
 
         const isDirect = packet.topic === '__direct';
-        const topic = isDirect ? (packet.data?.topic as string) : packet.topic;
-        let data = isDirect ? (packet.data as Record<string, unknown>) : (packet.data ?? packet);
+        const topic = isDirect ? (packet as any).data?.topic as string : packet.topic;
+        let data: unknown = isDirect ? (packet as any).data : ((packet as any).data ?? packet);
 
-        if (isDirect && data && typeof data === 'object' && data.data !== undefined) {
-            data = data.data as Record<string, unknown>;
+        if (isDirect && data && typeof data === 'object' && (data as any).data !== undefined) {
+            data = (data as any).data;
         }
 
         if (!topic) {
@@ -59,14 +60,14 @@ export class NetworkDispatcher {
         // 2. Exact Match
         const handler = this.handlers.get(topic);
         if (handler) {
-            await handler(data as Record<string, unknown>, packet);
+            await handler(data, packet);
             return;
         }
 
         // 3. Prefix Match
         for (const [prefix, h] of this.prefixHandlers.entries()) {
             if (topic.startsWith(prefix)) {
-                await h(data as Record<string, unknown>, packet);
+                await h(data, packet);
                 return;
             }
         }
