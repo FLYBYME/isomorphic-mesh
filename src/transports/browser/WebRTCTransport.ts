@@ -42,13 +42,13 @@ export class WebRTCTransport extends BaseTransport {
             throw new Error(`WebRTC DataChannel not open for node ${nodeID}`);
         }
         const payload = this.serializer.serialize(packet);
-        peer.dc.send(payload);
+        peer.dc.send(payload as unknown as ArrayBufferView<ArrayBuffer>);
     }
 
     async publish(topic: string, packet: MeshPacket): Promise<void> {
         for (const peer of this.peers.values()) {
             if (peer.dc.readyState === 'open') {
-                peer.dc.send(this.serializer.serialize(packet));
+                peer.dc.send(this.serializer.serialize(packet) as unknown as ArrayBufferView<ArrayBuffer>);
             }
         }
     }

@@ -4,10 +4,19 @@ import { z } from 'zod';
  * MeshPacketSchema — The single source of truth for all wire communication.
  */
 export const MeshPacketSchema = z.object({
-    id: z.string().uuid(),
-    type: z.enum(['call', 'emit', 'reply', 'error', 'telemetry']),
-    action: z.string().optional(),
-    payload: z.unknown(),
+    id: z.string(),
+    type: z.enum(['REQUEST', 'RESPONSE', 'RESPONSE_ERROR', 'EVENT', 'AUTH', 'PING', 'STREAM_OPEN', 'STREAM_DATA', 'STREAM_ACK', 'STREAM_CLOSE', 'STREAM_ERROR']),
+    topic: z.string().optional(),
+    data: z.unknown().optional(),
+    senderNodeID: z.string().optional(),
+    timestamp: z.number().optional(),
+    version: z.number().optional(),
+    streamID: z.string().optional(),
+    error: z.object({
+        message: z.string(),
+        code: z.union([z.string(), z.number()]).optional(),
+        data: z.unknown().optional()
+    }).optional(),
     meta: z.object({
         tenantId: z.string().optional(),
         correlationId: z.string().optional(),
@@ -19,6 +28,7 @@ export const MeshPacketSchema = z.object({
         traceId: z.string().optional(),
         spanId: z.string().optional(),
         parentId: z.string().optional(),
+        compression: z.string().optional(),
     }).default({
         ttl: 5,
         path: []

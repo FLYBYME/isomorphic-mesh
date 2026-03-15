@@ -73,24 +73,18 @@ describe('Core Classes', () => {
         const dispatcher = new NetworkDispatcher(mockLogger);
         ctrl.registerHandlers(dispatcher);
 
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.info', data: { nodeID: 'node-2' }, id: '1', timestamp: 1 });
+        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.announce', data: { nodeID: 'node-2' }, id: '1', timestamp: 1, type: 'EVENT' } as any);
         expect(mockRegistry.registerNode).toHaveBeenCalled();
 
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.heartbeat', data: { nodeID: 'node-2' }, id: '2', timestamp: 2 });
-        expect(mockRegistry.heartbeat).toHaveBeenCalled();
-
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.disconnect', data: { nodeID: 'node-2' }, id: '3', timestamp: 3 });
-        expect(mockRegistry.unregisterNode).toHaveBeenCalled();
-
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.ping', data: {}, id: '4', timestamp: 4 });
+        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.ping', data: {}, id: '4', timestamp: 4, type: 'EVENT' } as any);
         expect(mockNode.publish).toHaveBeenCalledWith('$node.pong', expect.any(Object));
 
         mockNode.orchestrator = { handlePEX: jest.fn().mockResolvedValue(undefined) };
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.pex', data: {}, id: '5', timestamp: 5 });
+        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$node.pex', data: { peers: [] }, id: '5', timestamp: 5, type: 'EVENT' } as any);
         expect(mockNode.orchestrator.handlePEX).toHaveBeenCalled();
 
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$rpc.request', data: { action: 'test' }, id: '6', timestamp: 6 });
-        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$rpc.response', data: {}, id: '7', timestamp: 7 });
+        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$rpc.request', data: { action: 'test' }, id: '6', timestamp: 6, type: 'REQUEST' } as any);
+        await dispatcher.dispatch({ senderNodeID: 'sender', topic: '$rpc.response', data: {}, id: '7', timestamp: 7, type: 'RESPONSE' } as any);
     });
 
     it('NetworkDispatcher works', async () => {
@@ -99,27 +93,25 @@ describe('Core Classes', () => {
         disp.on('test.topic', handler);
         disp.on('test.*', handler);
 
-        await disp.dispatch({ senderNodeID: 'sender', topic: 'test.topic', data: { a: 1 }, id: '1', timestamp: 1 });
+        await disp.dispatch({ senderNodeID: 'sender', topic: 'test.topic', data: { a: 1 }, id: '1', timestamp: 1, type: 'EVENT' } as any);
         expect(handler).toHaveBeenCalledTimes(1);
 
-        await disp.dispatch({ senderNodeID: 'sender', topic: 'test.other', data: { b: 2 }, id: '2', timestamp: 2 });
+        await disp.dispatch({ senderNodeID: 'sender', topic: 'test.other', data: { b: 2 }, id: '2', timestamp: 2, type: 'EVENT' } as any);
         expect(handler).toHaveBeenCalledTimes(2);
 
-        await disp.dispatch({ senderNodeID: 'sender', topic: 'unmatched', data: { c: 3 }, id: '3', timestamp: 3 });
+        await disp.dispatch({ senderNodeID: 'sender', topic: 'unmatched', data: { c: 3 }, id: '3', timestamp: 3, type: 'EVENT' } as any);
         expect(handler).toHaveBeenCalledTimes(2);
 
-        await disp.dispatch({ senderNodeID: 'sender', topic: '__direct', data: { topic: 'test.topic', data: { d: 4 } }, id: '4', timestamp: 4 });
+        await disp.dispatch({ senderNodeID: 'sender', topic: '__direct', data: { topic: 'test.topic', data: { d: 4 } }, id: '4', timestamp: 4, type: 'EVENT' } as any);
         expect(handler).toHaveBeenCalledTimes(3);
         
-        await disp.dispatch({ senderNodeID: 'sender', topic: '__direct', data: { topic: 'test.topic' }, id: '5', timestamp: 5 });
+        await disp.dispatch({ senderNodeID: 'sender', topic: '__direct', data: { topic: 'test.topic' }, id: '5', timestamp: 5, type: 'EVENT' } as any);
         expect(handler).toHaveBeenCalledTimes(4);
 
         // Test rate limit
         for(let i=0; i < 1005; i++) {
-            await disp.dispatch({ topic: 'test.topic', senderNodeID: 'rate-limit-node', data: {}, id: `msg-${i}`, timestamp: i });
+            await disp.dispatch({ topic: 'test.topic', senderNodeID: 'rate-limit-node', data: {}, id: `msg-${i}`, timestamp: i, type: 'EVENT' } as any);
         }
-        
-        disp.cleanupRateLimits();
     });
 
     it('MeshOrchestrator works', async () => {

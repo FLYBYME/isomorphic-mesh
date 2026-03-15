@@ -1,7 +1,7 @@
 import { ILogger, IServiceRegistry } from '../types/mesh.types';
 import { MeshPacket } from '../types/packet.types';
 
-export type NetworkHandler = (data: any, packet: MeshPacket) => void | Promise<void>;
+export type NetworkHandler = (data: unknown, packet: MeshPacket) => void | Promise<void>;
 
 /**
  * NetworkDispatcher - Routes incoming network packets to the appropriate handlers.
@@ -34,11 +34,17 @@ export class NetworkDispatcher {
      */
     async dispatch(packet: MeshPacket): Promise<void> {
         const isDirect = packet.topic === '__direct';
-        const topic = isDirect ? (packet as any).data?.topic as string : packet.topic;
-        let data: unknown = isDirect ? (packet as any).data : ((packet as any).data ?? packet);
+        let topic = packet.topic;
+        let data: unknown = packet;
 
-        if (isDirect && data && typeof data === 'object' && (data as any).data !== undefined) {
-            data = (data as any).data;
+        if (isDirect) {
+            const directData = (packet as unknown as { data?: { topic?: string, data?: unknown } }).data;
+            if (directData?.topic) {
+                topic = directData.topic;
+                data = directData.data;
+            }
+        } else if ('data' in packet) {
+            data = packet.data;
         }
 
         if (!topic) {

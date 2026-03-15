@@ -37,7 +37,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
     public readonly orchestrator: MeshOrchestrator;
     public readonly server: UnifiedServer | null = null;
 
-    private interceptors: IInterceptor<IMeshPacket, IMeshPacket>[] = [];
+    private interceptors: IInterceptor<MeshPacket, MeshPacket>[] = [];
     private rateLimiter: RateLimitInterceptor;
     private circuitBreaker: CircuitBreakerInterceptor;
 
@@ -52,11 +52,11 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             this.server = new UnifiedServer(options.port);
         }
 
-        this.transport = new TransportManager(options, this as IMeshNetwork); 
+        this.transport = new TransportManager(options, this as IMeshNetwork);
         this.dispatcher = new NetworkDispatcher(
-            this.logger, 
-            this.registry, 
-            this.nodeID, 
+            this.logger,
+            this.registry,
+            this.nodeID,
             (nodeID, packet) => this.transport.send(nodeID, packet)
         );
         this.controller = new NetworkController(this as IMeshNetwork, this.logger);
@@ -65,7 +65,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
         });
 
         // Set orchestrator on IMeshNode interface
-        (this as any).orchestrator = this.orchestrator;
+        (this as unknown as { orchestrator: MeshOrchestrator }).orchestrator = this.orchestrator;
 
         this.controller.registerHandlers(this.dispatcher);
 
@@ -74,11 +74,11 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
         this.circuitBreaker = new CircuitBreakerInterceptor();
 
         // Register default routing interceptors
-        this.use(this.rateLimiter);
-        this.use(this.circuitBreaker);
-        this.use(new WorkerProxyInterceptor(this.nodeID, this.registry, (t) => this.dispatcher.hasHandler(t)));
-        this.use(new RoutingInterceptor(this.nodeID, this.transport));
-        this.use(new TraceInterceptor());
+        this.use(this.rateLimiter as any);
+        this.use(this.circuitBreaker as any);
+        this.use(new WorkerProxyInterceptor(this.nodeID, this.registry, (t) => this.dispatcher.hasHandler(t)) as any);
+        this.use(new RoutingInterceptor(this.nodeID, this.transport) as any);
+        this.use(new TraceInterceptor() as any);
 
         this.transport.on('packet', async (packet: MeshPacket) => {
             // Track Resiliency Status
@@ -88,7 +88,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
                 this.circuitBreaker.recordSuccess(packet.senderNodeID);
             }
 
-            let processedData: IMeshPacket = packet;
+            let processedData: MeshPacket = packet;
 
             // Execute Inbound Pipeline
             for (const interceptor of [...this.interceptors].reverse()) {
@@ -96,15 +96,14 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
                     processedData = await interceptor.onInbound(processedData);
                 }
             }
-            
-            await this.dispatcher.dispatch(processedData as MeshPacket);
+
+            await this.dispatcher.dispatch(processedData);
         });
     }
 
-    public use(interceptor: IInterceptor<IMeshPacket, IMeshPacket>): void {
+    public use(interceptor: IInterceptor<MeshPacket, MeshPacket>): void {
         this.interceptors.push(interceptor);
     }
-
     /**
      * Ties a metrics registry to the network stack for resiliency event tracking.
      */
@@ -134,25 +133,25 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
         }
     }
 
-    async send<T>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void> {
+    async send<T = unknown>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void> {
         let priority = options?.priority ?? 1; // Default Normal
-        
+
         // Auto-detect QoS for critical infrastructure topics
         if (topic.startsWith('raft.') || topic.startsWith('kademlia.')) {
             priority = 2; // High Priority
         }
 
-        let packet: IMeshPacket = {
+        let packet: MeshPacket = {
             topic,
             data,
             id: options?.id || `mesh_${Math.random().toString(36).substr(2, 9)}`,
-            type: options?.type || 'EVENT',
+            type: options?.type as any || 'EVENT',
             senderNodeID: this.nodeID,
             timestamp: Date.now(),
-            version: (TCPTransport as any).PROTOCOL_VERSION, // Use common version
+            version: TCPTransport.PROTOCOL_VERSION, // Use common version
             priority,
-            meta: options?.meta
-        };
+            meta: options?.meta || {}
+        } as MeshPacket;
 
         // Execute Outbound Pipeline
         for (const interceptor of this.interceptors) {
@@ -165,8 +164,9 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             throw new Error(`Circuit open for node ${targetNodeID}`);
         }
 
-        return this.transport.send(targetNodeID, packet as MeshPacket);
+        await this.transport.send(targetNodeID, packet);
     }
+
 
     async publish<T>(topic: string, data: T): Promise<void> {
         let priority = 1;

@@ -98,12 +98,13 @@ export class TCPTransport extends BaseTransport {
         const msgID = (packet.id as string || '0000000000000000').slice(0, 16).padEnd(16, '0');
         
         const frame = TCPFrameCodec.encode(type, msgID, payload);
-        const canWrite = (peer.socket as any).write(frame);
+        const socket = peer.socket as unknown as { write(d: Uint8Array): boolean, once(e: string, cb: () => void): void };
+        const canWrite = socket.write(frame);
 
         if (!canWrite) {
             peer.isChoked = true;
             await new Promise<void>((resolve) => {
-                (peer.socket as any).once('drain', () => {
+                socket.once('drain', () => {
                     peer.isChoked = false;
                     resolve();
                 });
@@ -138,7 +139,8 @@ export class TCPTransport extends BaseTransport {
     }
 
     private handleConnection(socket: INodeSocket) {
-        const remoteAddress = (socket as any).remoteAddress;
+        const socketWithAddress = socket as unknown as { remoteAddress?: string };
+        const remoteAddress = socketWithAddress.remoteAddress;
         if (this.allowedCIDRs.length > 0 && remoteAddress) {
             const isAllowed = this.checkIPAllowed(remoteAddress);
             if (!isAllowed) {
@@ -296,13 +298,15 @@ export class TCPTransport extends BaseTransport {
             }
             try {
                 const pong = TCPFrameCodec.encode(WirePacketType.PING, 'ping', new Uint8Array(0));
-                (peer.socket as any).write(pong, (err: any) => {
+                const socket = peer.socket as unknown as { write(d: Uint8Array, cb: (err?: Error) => void): void };
+                socket.write(pong, (err) => {
                     if (err) {
                         this.logger?.warn(`Heartbeat write failed for ${peer.nodeID}: ${err.message}`);
                         (peer.socket as INodeSocket).destroy();
                     }
                 });
-            } catch (err: any) {
+            } catch (error) {
+                const err = error instanceof Error ? error : new Error(String(error));
                 this.logger?.warn(`Heartbeat failed for ${peer.nodeID}: ${err.message}`);
                 (peer.socket as INodeSocket).destroy();
             }

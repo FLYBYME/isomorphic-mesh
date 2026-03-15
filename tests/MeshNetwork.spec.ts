@@ -19,8 +19,15 @@ describe('MeshNetwork Smoke Test', () => {
             getAvailableNodes: jest.fn().mockReturnValue([]),
             registerNode: jest.fn(),
             unregisterNode: jest.fn(),
-            heartbeat: jest.fn()
-        };
+            heartbeat: jest.fn(),
+            on: jest.fn(),
+            off: jest.fn(),
+            emit: jest.fn(),
+            registerService: jest.fn(),
+            unregisterService: jest.fn(),
+            listServices: jest.fn(),
+            findService: jest.fn()
+        } as any;
     });
 
     test('should initialize and start/stop without crashing', async () => {
