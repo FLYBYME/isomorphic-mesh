@@ -18,11 +18,12 @@ export class CircuitBreakerInterceptor implements IInterceptor<IMeshPacket, IMes
     private breakers = new Map<string, BreakerInfo>();
     private readonly FAILURE_THRESHOLD = 5;
     private readonly RESET_TIMEOUT = 30000; // 30 seconds
+    private readonly MAX_BREAKERS = 2000;
 
     constructor(private metrics?: any) {}
 
     async onOutbound(packet: IMeshPacket): Promise<IMeshPacket> {
-        const targetNodeID = packet.targetNodeID;
+        const targetNodeID = (packet as any).targetNodeID || packet.meta?.targetNodeID;
         if (!targetNodeID || targetNodeID === '*') return packet;
 
         const info = this.getBreaker(targetNodeID);
@@ -75,6 +76,10 @@ export class CircuitBreakerInterceptor implements IInterceptor<IMeshPacket, IMes
     private getBreaker(nodeID: string): BreakerInfo {
         let info = this.breakers.get(nodeID);
         if (!info) {
+            if (this.breakers.size >= this.MAX_BREAKERS) {
+                // Clear all to prevent OOM. In production, use LRU.
+                this.breakers.clear();
+            }
             info = { state: 'CLOSED', failures: 0, lastFailureTime: 0 };
             this.breakers.set(nodeID, info);
         }

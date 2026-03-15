@@ -128,6 +128,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
         await this.orchestrator.stop();
         await this.transport.disconnect();
         this.rateLimiter.stop();
+        this.dispatcher.stop();
         if (this.server) {
             await this.server.stop();
         }

@@ -64,6 +64,11 @@ export class NetworkDispatcher {
         this.logger.debug(`[NetworkDispatcher] No handler registered for topic: ${topic}`);
     }
 
+    public stop(): void {
+        this.handlers.clear();
+        this.prefixHandlers.clear();
+    }
+
     public hasHandler(topic: string): boolean {
         if (this.handlers.has(topic)) return true;
         for (const prefix of this.prefixHandlers.keys()) {

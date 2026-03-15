@@ -312,14 +312,17 @@ export class TCPTransport extends BaseTransport {
     async connectToPeer(nodeID: string, url: string): Promise<void> {
         const parsed = new URL(url);
         return new Promise((resolve, reject) => {
-            const socket = tls.connect(Number(parsed.port), parsed.hostname, this.tlsOptions, () => {
+            const socket = tls.connect(Number(parsed.port), parsed.hostname, this.tlsOptions as any, () => {
                 const peer: PeerState = {
                     socket: socket as unknown as INodeSocket,
-                    nodeID,
+                    nodeID: nodeID,
                     isAuthenticated: false,
                     isChoked: true,
-                    bufferPot: new Uint8Array(0)
+                    bufferPot: new Uint8Array(0),
+                    bufferList: [],
+                    bufferPotSize: 0
                 };
+
                 
                 socket.on('data', (chunk: unknown) => this.processData(peer, chunk as Uint8Array));
                 socket.on('end', () => {
