@@ -1,10 +1,9 @@
-export interface ILogger {
-    debug(msg: string, data?: Record<string, unknown>): void;
-    info(msg: string, data?: Record<string, unknown>): void;
-    warn(msg: string, data?: Record<string, unknown>): void;
-    error(msg: string, data?: Record<string, unknown>): void;
+import { IServiceRegistry, IMeshNode, ILogger as ICoreLogger } from 'isomorphic-core';
+
+export { IServiceRegistry, IMeshNode };
+
+export interface ILogger extends ICoreLogger {
     trace?(msg: string, data?: Record<string, unknown>): void;
-    child(context: Record<string, unknown>): ILogger;
 }
 
 export interface ActionInfo {
@@ -58,23 +57,6 @@ export interface NodeInfo {
     publicKey?: string; // Ed25519 Public Key
 }
 
-export interface IServiceRegistry {
-    getNode(nodeID: string): NodeInfo | undefined;
-    getNodes(): NodeInfo[];
-    getAvailableNodes(): NodeInfo[];
-    registerNode(node: NodeInfo): void;
-    unregisterNode(nodeID: string): void;
-    heartbeat(nodeID: string, data?: Record<string, unknown>): void;
-}
-
-export interface IMeshNode {
-    readonly nodeId: string;
-    readonly namespace: string;
-    readonly logger: ILogger;
-    readonly registry: IServiceRegistry;
-    getConfig(): Record<string, unknown>;
-}
-
 export interface IPacket<T = Record<string, unknown>> {
     id: string;
     topic: string;
@@ -121,4 +103,3 @@ export interface TransportConnectOptions {
     port?: number;
     logger?: ILogger;
 }
-

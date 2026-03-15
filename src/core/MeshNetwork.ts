@@ -49,15 +49,15 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             this.server = new UnifiedServer(options.port);
         }
 
-        this.transport = new TransportManager(options, this as IMeshNetwork as any); 
+        this.transport = new TransportManager(options, this as IMeshNetwork); 
         this.dispatcher = new NetworkDispatcher(
             this.logger, 
-            this.registry as any, 
+            this.registry, 
             this.nodeID, 
             (nodeID, packet) => this.transport.send(nodeID, packet)
         );
-        this.controller = new NetworkController(this as IMeshNetwork as any, this.logger);
-        this.orchestrator = new MeshOrchestrator(this as IMeshNetwork as any, {
+        this.controller = new NetworkController(this as IMeshNetwork, this.logger);
+        this.orchestrator = new MeshOrchestrator(this as IMeshNetwork, {
             bootstrapNodes: options.bootstrapNodes
         });
 
@@ -101,10 +101,10 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
     /**
      * Ties a metrics registry to the network stack for resiliency event tracking.
      */
-    public setMetrics(metrics: any): void {
+    public setMetrics(metrics: { increment(name: string, value: number, labels?: Record<string, string>): void }): void {
         // Update existing interceptors with the metrics registry
-        (this.rateLimiter as any).metrics = metrics;
-        (this.circuitBreaker as any).metrics = metrics;
+        (this.rateLimiter as unknown as { metrics: unknown }).metrics = metrics;
+        (this.circuitBreaker as unknown as { metrics: unknown }).metrics = metrics;
     }
 
     async start(): Promise<void> {
@@ -143,30 +143,28 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             }
         }
 
+        if (packet.topic === '__circuit_open') {
+            throw new Error(`Circuit open for node ${targetNodeID}`);
+        }
+
         return this.transport.send(targetNodeID, packet as MeshPacket);
     }
 
     async publish<T>(topic: string, data: T): Promise<void> {
-        let packet: IMeshPacket = {
+        const packet: IMeshPacket = {
             topic,
             data,
-            id: `msg_${Math.random().toString(36).substr(2, 9)}`,
+            id: `mesh_${Math.random().toString(36).substr(2, 9)}`,
             type: 'EVENT',
             senderNodeID: this.nodeID,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            meta: {}
         };
-
-        // Execute Outbound Pipeline
-        for (const interceptor of this.interceptors) {
-            if (interceptor.onOutbound) {
-                packet = await interceptor.onOutbound(packet);
-            }
-        }
 
         return this.transport.publish(topic, packet as MeshPacket);
     }
 
     onMessage<T>(topic: string, handler: IMeshNetworkSubscriptionHandler<T>): void {
-        this.dispatcher.on(topic, handler as any);
+        this.dispatcher.on(topic, handler as (data: unknown, packet: MeshPacket) => void);
     }
 }

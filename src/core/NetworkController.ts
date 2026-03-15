@@ -6,73 +6,55 @@ import { NetworkDispatcher } from './NetworkDispatcher';
  * NetworkController - Handles standard mesh packets.
  */
 export class NetworkController {
-    private logger: ILogger;
-
     constructor(
         private node: IMeshNode,
-        logger: ILogger
-    ) {
-        this.logger = logger.child({ name: 'NetworkController' });
-    }
+        private logger: ILogger
+    ) {}
 
     public registerHandlers(dispatcher: NetworkDispatcher): void {
-        dispatcher.on('$node.info', this.handleNodeInfo.bind(this));
-        dispatcher.on('$node.heartbeat', this.handleNodeHeartbeat.bind(this));
-        dispatcher.on('$node.disconnect', this.handleNodeDisconnect.bind(this));
-        dispatcher.on('$node.ping', this.handlePing.bind(this));
-        dispatcher.on('$node.pex', this.handlePEX.bind(this));
-        
-        dispatcher.on('$rpc.request', this.handleRPCRequest.bind(this));
-        dispatcher.on('$rpc.response', this.handleRPCResponse.bind(this));
+        dispatcher.on('$node.ping', (data, packet) => this.handlePing(packet));
+        dispatcher.on('$node.pong', (data, packet) => this.handlePong(data, packet));
+        dispatcher.on('$node.pex', (data, packet) => this.handlePex(data, packet));
+        dispatcher.on('$node.announce', (data, packet) => this.handleAnnounce(data, packet));
+        dispatcher.on('$rpc.request', (data, packet) => this.handleRPCRequest(data, packet));
+        dispatcher.on('$rpc.response', (data, packet) => this.handleRPCResponse(data, packet));
     }
 
-    private async handleNodeInfo(data: any, packet: MeshPacket): Promise<void> {
-        const nodeID = data.nodeID as string;
-        if (nodeID && nodeID !== this.node.nodeId) {
-            this.node.registry.registerNode({
-                nodeID,
-                namespace: (data.namespace as string) || 'default',
-                addresses: (data.addresses as string[]) || [],
-                type: (data.type as string) || 'unknown',
-                available: true,
-                timestamp: Date.now(),
-                capabilities: (data.capabilities as Record<string, unknown>) || {},
-                services: (data.services as any[]) || []
-            });
-            this.logger.info('New node discovered', { remoteNodeID: nodeID });
-        }
+    private async handleAnnounce(data: any, packet: MeshPacket): Promise<void> {
+        if (packet.senderNodeID === this.node.nodeID) return;
+        this.node.registry.registerNode({
+            nodeID: packet.senderNodeID,
+            type: 'node',
+            namespace: 'default', // Ideally from data or config
+            addresses: [],
+            available: true,
+            timestamp: Date.now(),
+            nodeSeq: data.nodeSeq || 0,
+            hostname: data.hostname || 'unknown',
+            services: (data.services as any[]) || []
+        });
     }
 
-    private async handleNodeHeartbeat(data: any, packet: MeshPacket): Promise<void> {
-        const nodeID = data.nodeID as string;
-        if (nodeID && nodeID !== this.node.nodeId) {
-            this.node.registry.heartbeat(nodeID, data);
-        }
+    private async handlePing(packet: MeshPacket): Promise<void> {
+        if (packet.senderNodeID === this.node.nodeID) return;
+        const net = this.node as unknown as { publish(topic: string, data: unknown): void };
+        net.publish('$node.pong', { id: packet.id, timestamp: Date.now() });
     }
 
-    private async handleNodeDisconnect(data: any, packet: MeshPacket): Promise<void> {
-        const nodeID = data.nodeID as string;
-        if (nodeID && nodeID !== this.node.nodeId) {
-            this.node.registry.unregisterNode(nodeID);
-        }
+    private async handlePong(data: any, packet: MeshPacket): Promise<void> {
+        this.logger.debug('Ping response received', { from: packet.senderNodeID });
     }
 
-    private async handlePing(data: any, packet: MeshPacket): Promise<void> {
-        // Echo back a pong with same ID
-        if (packet.id) {
-            (this.node as any).publish('$node.pong', { id: packet.id, timestamp: Date.now() });
-        }
-    }
-
-    private async handlePEX(data: any, packet: MeshPacket): Promise<void> {
-        const orchestrator = (this.node as any).orchestrator;
-        if (orchestrator) {
-            await orchestrator.handlePEX(data);
+    private async handlePex(data: any, packet: MeshPacket): Promise<void> {
+        const net = this.node as unknown as { orchestrator: { updatePeers(nodes: any[]): void } };
+        const orchestrator = net.orchestrator;
+        if (orchestrator && data.nodes) {
+            orchestrator.updatePeers(data.nodes);
         }
     }
 
     private async handleRPCRequest(data: any, packet: MeshPacket): Promise<void> {
-        this.node.logger.debug('Incoming RPC request', { action: data.action as string });
+        this.logger.debug('Incoming RPC request', { action: data.action as string });
     }
 
     private async handleRPCResponse(data: any, packet: MeshPacket): Promise<void> {

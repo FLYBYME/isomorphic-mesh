@@ -80,7 +80,7 @@ export class MeshOrchestrator {
         if (!data.peers || !Array.isArray(data.peers)) return;
 
         for (const peer of data.peers) {
-            if (!peer.nodeID || peer.nodeID === this.node.nodeId) continue;
+            if (!peer.nodeID || peer.nodeID === this.node.nodeID) continue;
 
             const existing = this.node.registry.getNode(peer.nodeID);
             if (!existing) {

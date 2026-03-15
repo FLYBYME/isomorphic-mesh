@@ -37,7 +37,7 @@ export class TransportManager extends EventEmitter {
         for (const t of this.transports.values()) {
             await t.connect({
                 url: opts.url || '',
-                nodeID: this.node.nodeId,
+                nodeID: this.node.nodeID,
                 namespace: this.node.namespace,
                 logger: this.node.logger,
                 port: opts.port

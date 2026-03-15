@@ -40,7 +40,7 @@ export const TelemetryPacketSchema = z.object({
             type: z.literal('log'),
             level: z.enum(['debug', 'info', 'warn', 'error']),
             message: z.string(),
-            data: z.record(z.unknown()).optional(),
+            data: z.record(z.string(), z.unknown()).optional(),
             traceId: z.string().optional(),
             spanId: z.string().optional(),
         }),
@@ -49,7 +49,7 @@ export const TelemetryPacketSchema = z.object({
             name: z.string(),
             metricType: z.enum(['counter', 'gauge', 'histogram']),
             value: z.number(),
-            labels: z.record(z.string()).optional(),
+            labels: z.record(z.string(), z.string()).optional(),
         })
     ]),
 });

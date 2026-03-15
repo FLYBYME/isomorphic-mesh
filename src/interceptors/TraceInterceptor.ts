@@ -11,10 +11,10 @@ export class TraceInterceptor implements IInterceptor<IMeshPacket, IMeshPacket> 
     /**
      * Inbound: Extract tracing context from packet metadata to hydrate the mesh context.
      */
-    onInbound(packet: IMeshPacket): IMeshPacket {
+    onInbound(packet: any): any {
         // If tracing meta exists, we ensure it's available for the ServiceBroker to pick up.
         // The ServiceBroker will use these fields to populate the IContext.
-        if (packet.meta.traceId) {
+        if (packet.meta?.traceId) {
             return {
                 ...packet,
                 meta: {
@@ -32,10 +32,10 @@ export class TraceInterceptor implements IInterceptor<IMeshPacket, IMeshPacket> 
     /**
      * Outbound: Inject current tracing context into packet metadata.
      */
-    onOutbound(packet: IMeshPacket): IMeshPacket {
+    onOutbound(packet: any): any {
         // The ServiceBroker should have already initialized tracing in the packet meta
         // if it originated from a context with tracing enabled.
-        if (packet.meta.traceId) {
+        if (packet.meta?.traceId) {
             return {
                 ...packet,
                 meta: {
