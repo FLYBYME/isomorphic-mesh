@@ -46,6 +46,19 @@ export class NetworkDispatcher {
         // 1. Rate Limiting Middleware
         if (packet.senderNodeID && !this.checkRateLimit(packet.senderNodeID)) {
             this.logger.warn(`[NetworkDispatcher] Rate limit exceeded for node: ${packet.senderNodeID}`);
+            
+            // Increment metrics if registry is available
+            if (this.registry) {
+                try {
+                    // Try to get metrics provider from the registry's parent app if possible, 
+                    // or just use a generic name if we can't.
+                    // Since NetworkDispatcher doesn't have direct access to app, 
+                    // we'll rely on the fact that metrics might be injected later.
+                    (this.registry as any).metrics?.increment('mesh.rate_limit.exceeded', 1, { 
+                        senderNodeID: packet.senderNodeID 
+                    });
+                } catch (e) { /* ignore */ }
+            }
             return;
         }
 

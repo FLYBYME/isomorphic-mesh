@@ -9,6 +9,7 @@ import { MeshPacket } from '../types/packet.types';
 import { Env } from '../utils/Env';
 import { IInterceptor } from 'isomorphic-core';
 import { RoutingInterceptor } from '../interceptors/RoutingInterceptor';
+import { TraceInterceptor } from '../interceptors/TraceInterceptor';
 
 export interface MeshNetworkOptions extends TransportOptions {
     nodeId?: string;
@@ -58,8 +59,9 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
 
         this.controller.registerHandlers(this.dispatcher);
 
-        // Register default routing interceptor
+        // Register default routing interceptors
         this.use(new RoutingInterceptor(this.nodeID, this.transport));
+        this.use(new TraceInterceptor());
 
         this.transport.on('packet', async (packet: MeshPacket) => {
             let processedData: IMeshPacket = packet;
