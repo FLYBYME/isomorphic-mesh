@@ -4,7 +4,7 @@ import { NetworkDispatcher } from './NetworkDispatcher';
 import { NetworkController } from './NetworkController';
 import { MeshOrchestrator } from './MeshOrchestrator';
 import { UnifiedServer } from './UnifiedServer';
-import { IMeshNode, ILogger, IServiceRegistry } from '../types/mesh.types';
+import { IMeshNetwork, ILogger, IServiceRegistry, IMeshPacket, IMeshNetworkSubscriptionHandler } from 'isomorphic-core';
 import { MeshPacket } from '../types/packet.types';
 import { Env } from '../utils/Env';
 import { IInterceptor } from 'isomorphic-core';
@@ -18,8 +18,8 @@ export interface MeshNetworkOptions extends TransportOptions {
 /**
  * MeshNetwork: Comprehensive high-level entry point for the networking stack.
  */
-export class MeshNetwork extends EventEmitter implements IMeshNode {
-    public readonly nodeId: string;
+export class MeshNetwork extends EventEmitter implements IMeshNetwork {
+    public readonly nodeID: string;
     public readonly namespace: string;
     public readonly logger: ILogger;
     public readonly registry: IServiceRegistry;
@@ -30,53 +30,54 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
     public readonly orchestrator: MeshOrchestrator;
     public readonly server: UnifiedServer | null = null;
 
-    private interceptors: IInterceptor<MeshPacket, MeshPacket>[] = [];
+    private interceptors: IInterceptor<IMeshPacket, IMeshPacket>[] = [];
 
-    constructor(options: MeshNetworkOptions, logger: ILogger, registry: IServiceRegistry) {
+    constructor(nodeID: string, registry: IServiceRegistry, options: MeshNetworkOptions & { logger: ILogger }) {
         super();
-        this.nodeId = options.nodeId || `node_${Math.random().toString(36).substr(2, 9)}`;
+        this.nodeID = nodeID || options.nodeId || `node_${Math.random().toString(36).substr(2, 9)}`;
         this.namespace = options.namespace || 'default';
-        this.logger = logger;
+        this.logger = options.logger;
         this.registry = registry;
 
         if (Env.isNode()) {
             this.server = new UnifiedServer(options.port);
         }
 
-        this.transport = new TransportManager(options, this);
-        this.dispatcher = new NetworkDispatcher(logger);
-        this.controller = new NetworkController(this, logger);
-        this.orchestrator = new MeshOrchestrator(this, {
+        this.transport = new TransportManager(options, this as IMeshNetwork as any); 
+        this.dispatcher = new NetworkDispatcher(this.logger);
+        this.controller = new NetworkController(this as IMeshNetwork as any, this.logger);
+        this.orchestrator = new MeshOrchestrator(this as IMeshNetwork as any, {
             bootstrapNodes: options.bootstrapNodes
         });
 
         this.controller.registerHandlers(this.dispatcher);
 
         this.transport.on('packet', async (packet: MeshPacket) => {
-            let processedData = packet;
+            let processedData: IMeshPacket = packet;
 
-            // Execute Inbound Pipeline (In REVERSE order)
+            // Execute Inbound Pipeline
             for (const interceptor of [...this.interceptors].reverse()) {
                 if (interceptor.onInbound) {
                     processedData = await interceptor.onInbound(processedData);
                 }
             }
             
-            await this.dispatcher.dispatch(processedData);
+            await this.dispatcher.dispatch(processedData as MeshPacket);
         });
     }
 
-    public use(interceptor: IInterceptor<MeshPacket, MeshPacket>): void {
+    public use(interceptor: IInterceptor<IMeshPacket, IMeshPacket>): void {
         this.interceptors.push(interceptor);
     }
 
     async start(): Promise<void> {
+        console.log(`[MeshNetwork] Starting node ${this.nodeID}, server is:`, this.server);
         if (this.server) {
+            console.log(`[MeshNetwork] Calling server.listen()`);
             await this.server.listen();
         }
         await this.transport.connect({});
         await this.orchestrator.start();
-        this.emit('started');
     }
 
     async stop(): Promise<void> {
@@ -85,60 +86,50 @@ export class MeshNetwork extends EventEmitter implements IMeshNode {
         if (this.server) {
             await this.server.stop();
         }
-        this.emit('stopped');
     }
 
-    async send(nodeID: string, topicOrPacket: string | MeshPacket, data?: unknown): Promise<void> {
-        let packet: MeshPacket;
-        
-        if (typeof topicOrPacket !== 'string') {
-            packet = topicOrPacket;
-        } else {
-            packet = {
-                topic: topicOrPacket,
-                data,
-                id: `mesh_${Math.random().toString(36).substr(2, 9)}`,
-                type: 'EVENT',
-                senderNodeID: this.nodeId,
-                timestamp: Date.now()
-            } as MeshPacket;
-        }
+    async send<T>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void> {
+        let packet: IMeshPacket = {
+            topic,
+            data,
+            id: options?.id || `mesh_${Math.random().toString(36).substr(2, 9)}`,
+            type: options?.type || 'EVENT',
+            senderNodeID: this.nodeID,
+            timestamp: Date.now(),
+            meta: options?.meta
+        };
 
-        // Execute Outbound Pipeline (In order of registration)
+        // Execute Outbound Pipeline
         for (const interceptor of this.interceptors) {
             if (interceptor.onOutbound) {
                 packet = await interceptor.onOutbound(packet);
             }
         }
 
-        return this.transport.send(nodeID, packet);
+        return this.transport.send(targetNodeID, packet as MeshPacket);
     }
 
-    async publish(topic: string, data: unknown): Promise<void> {
-        let packet: MeshPacket = {
+    async publish<T>(topic: string, data: T): Promise<void> {
+        let packet: IMeshPacket = {
             topic,
             data,
             id: `msg_${Math.random().toString(36).substr(2, 9)}`,
             type: 'EVENT',
-            senderNodeID: this.nodeId,
+            senderNodeID: this.nodeID,
             timestamp: Date.now()
-        } as MeshPacket;
+        };
 
-        // Execute Outbound Pipeline (In order of registration)
+        // Execute Outbound Pipeline
         for (const interceptor of this.interceptors) {
             if (interceptor.onOutbound) {
                 packet = await interceptor.onOutbound(packet);
             }
         }
 
-        return this.transport.publish(topic, packet);
+        return this.transport.publish(topic, packet as MeshPacket);
     }
 
-    onMessage(topic: string, handler: (data: unknown, packet: MeshPacket) => void): void {
+    onMessage<T>(topic: string, handler: IMeshNetworkSubscriptionHandler<T>): void {
         this.dispatcher.on(topic, handler as any);
-    }
-
-    getConfig(): Record<string, unknown> {
-        return {};
     }
 }

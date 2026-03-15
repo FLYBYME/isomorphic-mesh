@@ -11,12 +11,11 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
     "baseUrl": ".",
-    "composite": true,
-    "paths": {
-      "isomorphic-core": ["../isomorphic-core/src/index"],
-      "isomorphic-registry": ["../isomorphic-registry/src/index"],
-      "raft-consensus": ["../raft-consensus/src/index"]
-    }
+    "rootDir": "src",
+    "composite": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../isomorphic-core" }
+  ]
 }

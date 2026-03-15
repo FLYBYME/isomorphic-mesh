@@ -1,4 +1,6 @@
-export * from './core/MeshNetwork';
+export * from './types/packet.types';
+export * from './NetworkPlugin';
+export * from './modules/NetworkModule';
 export * from './core/TransportManager';
 export * from './core/NetworkDispatcher';
 export * from './core/NetworkController';
