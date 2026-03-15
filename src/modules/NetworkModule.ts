@@ -25,16 +25,16 @@ export class NetworkModule implements IMeshModule {
         }
 
         // 1. Initialize the Network stack
-        const fullOptions: MeshNetworkOptions & { logger: ILogger } = {
+        const fullOptions: MeshNetworkOptions = {
+            nodeId: app.nodeID,
             port: this.options.port || 4000,
             host: this.options.host || '0.0.0.0',
             serializerType: this.options.serializerType || 'json',
             transportType: this.options.transportType || 'tcp',
-            ...this.options,
-            logger: this.logger
+            ...this.options
         };
 
-        this.network = new MeshNetwork(app.nodeID, registry, fullOptions);
+        this.network = new MeshNetwork(fullOptions, this.logger, registry as any);
 
         // 2. Create the Plugin
         this.plugin = new NetworkPlugin(this.network);

@@ -11,7 +11,14 @@ export const MeshPacketSchema = z.object({
     meta: z.object({
         tenantId: z.string().optional(),
         correlationId: z.string().optional(),
-    }).default({}),
+        // Advanced Routing Fields
+        ttl: z.number().default(5),
+        path: z.array(z.string()).default([]),
+        finalDestinationID: z.string().optional(),
+    }).default({
+        ttl: 5,
+        path: []
+    }),
 });
 
 export type IMeshPacket = z.infer<typeof MeshPacketSchema>;

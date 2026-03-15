@@ -8,6 +8,7 @@ import { IMeshNetwork, ILogger, IServiceRegistry, IMeshPacket, IMeshNetworkSubsc
 import { MeshPacket } from '../types/packet.types';
 import { Env } from '../utils/Env';
 import { IInterceptor } from 'isomorphic-core';
+import { RoutingInterceptor } from '../interceptors/RoutingInterceptor';
 
 export interface MeshNetworkOptions extends TransportOptions {
     nodeId?: string;
@@ -32,11 +33,11 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
 
     private interceptors: IInterceptor<IMeshPacket, IMeshPacket>[] = [];
 
-    constructor(nodeID: string, registry: IServiceRegistry, options: MeshNetworkOptions & { logger: ILogger }) {
+    constructor(options: MeshNetworkOptions, logger: ILogger, registry: IServiceRegistry) {
         super();
-        this.nodeID = nodeID || options.nodeId || `node_${Math.random().toString(36).substr(2, 9)}`;
+        this.nodeID = options.nodeId || `node_${Math.random().toString(36).substr(2, 9)}`;
         this.namespace = options.namespace || 'default';
-        this.logger = options.logger;
+        this.logger = logger;
         this.registry = registry;
 
         if (Env.isNode()) {
@@ -44,13 +45,21 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
         }
 
         this.transport = new TransportManager(options, this as IMeshNetwork as any); 
-        this.dispatcher = new NetworkDispatcher(this.logger);
+        this.dispatcher = new NetworkDispatcher(
+            this.logger, 
+            this.registry as any, 
+            this.nodeID, 
+            (nodeID, packet) => this.transport.send(nodeID, packet)
+        );
         this.controller = new NetworkController(this as IMeshNetwork as any, this.logger);
         this.orchestrator = new MeshOrchestrator(this as IMeshNetwork as any, {
             bootstrapNodes: options.bootstrapNodes
         });
 
         this.controller.registerHandlers(this.dispatcher);
+
+        // Register default routing interceptor
+        this.use(new RoutingInterceptor(this.nodeID, this.transport));
 
         this.transport.on('packet', async (packet: MeshPacket) => {
             let processedData: IMeshPacket = packet;

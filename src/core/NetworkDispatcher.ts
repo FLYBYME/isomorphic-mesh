@@ -1,4 +1,4 @@
-import { ILogger } from '../types/mesh.types';
+import { ILogger, IServiceRegistry } from '../types/mesh.types';
 import { MeshPacket } from '../types/packet.types';
 
 export type NetworkHandler = (data: any, packet: MeshPacket) => void | Promise<void>;
@@ -10,7 +10,7 @@ interface RateLimitInfo {
 
 /**
  * NetworkDispatcher - Routes incoming network packets to the appropriate handlers.
- * Includes a built-in Rate Limiting middleware.
+ * Includes a built-in Rate Limiting middleware and Hub-and-Spoke Proxy logic.
  */
 export class NetworkDispatcher {
     private handlers: Map<string, NetworkHandler> = new Map();
@@ -21,7 +21,12 @@ export class NetworkDispatcher {
     private readonly MAX_PACKETS_PER_WINDOW = 1000;
     private readonly WINDOW_MS = 60000;
 
-    constructor(private logger: ILogger) { }
+    constructor(
+        private logger: ILogger,
+        private registry?: IServiceRegistry,
+        private nodeID?: string,
+        private transportSend?: (nodeID: string, packet: MeshPacket) => Promise<void>
+    ) { }
 
     /**
      * Register a handler for a specific topic or a topic prefix (using *).
@@ -57,14 +62,42 @@ export class NetworkDispatcher {
             return;
         }
 
-        // 2. Exact Match
+        // 2. Hub-and-Spoke Proxy Logic
+        // If we have a registry and this topic isn't handled locally, check if it's shadowed.
+        if (this.registry && !this.handlers.has(topic) && this.transportSend) {
+            const nodes = this.registry.getAvailableNodes();
+            const worker = nodes.find(n => 
+                n.parentID === this.nodeID && 
+                n.nodeType === 'worker' &&
+                n.services.some(svc => {
+                    const svcName = svc.fullName || svc.name;
+                    return (svc.actions && Object.keys(svc.actions).some(k => k === topic || `${svcName}.${k}` === topic));
+                })
+            );
+
+            if (worker) {
+                this.logger.debug(`[NetworkDispatcher] Proxying request for ${topic} to worker ${worker.nodeID}`);
+                const proxyPacket: MeshPacket = {
+                    ...packet,
+                    meta: {
+                        ...packet.meta,
+                        finalDestinationID: worker.nodeID,
+                        isProxy: true
+                    }
+                };
+                await this.transportSend(worker.nodeID, proxyPacket);
+                return;
+            }
+        }
+
+        // 3. Exact Match
         const handler = this.handlers.get(topic);
         if (handler) {
             await handler(data, packet);
             return;
         }
 
-        // 3. Prefix Match
+        // 4. Prefix Match
         for (const [prefix, h] of this.prefixHandlers.entries()) {
             if (topic.startsWith(prefix)) {
                 await h(data, packet);
