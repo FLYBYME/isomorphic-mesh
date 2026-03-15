@@ -21,11 +21,15 @@ export class RateLimitInterceptor implements IInterceptor<IMeshPacket, IMeshPack
     async onInbound(packet: IMeshPacket): Promise<IMeshPacket> {
         if (!packet.senderNodeID) return packet;
 
-        if (!this.checkRateLimit(packet.senderNodeID)) {
+        const tenantID = (packet.meta as any)?.tenant_id || 'default';
+        const key = `${tenantID}:${packet.senderNodeID}`;
+
+        if (!this.checkRateLimit(key)) {
             // Emit metrics event if registry is tied
             if (this.metrics) {
                 this.metrics.increment('mesh.rate_limit.exceeded', 1, { 
-                    senderNodeID: packet.senderNodeID 
+                    senderNodeID: packet.senderNodeID,
+                    tenantID
                 });
             }
 
@@ -36,13 +40,13 @@ export class RateLimitInterceptor implements IInterceptor<IMeshPacket, IMeshPack
         return packet;
     }
 
-    private checkRateLimit(nodeID: string): boolean {
+    private checkRateLimit(key: string): boolean {
         const now = Date.now();
-        let info = this.rateLimits.get(nodeID);
+        let info = this.rateLimits.get(key);
 
         if (!info || now > info.resetAt) {
             info = { count: 1, resetAt: now + this.WINDOW_MS };
-            this.rateLimits.set(nodeID, info);
+            this.rateLimits.set(key, info);
             return true;
         }
 

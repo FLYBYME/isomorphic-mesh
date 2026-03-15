@@ -5,27 +5,31 @@ import { TCPFrameCodec } from '../helpers/TCPFrameCodec';
 import { TCPAuthHandler } from '../helpers/TCPAuthHandler';
 import { IsomorphicCrypto } from '../../utils/Crypto';
 import { MeshPacket } from '../../types/packet.types';
-import net from 'node:net';
+import tls from 'node:tls';
 
 export interface INodeSocket extends ITransportSocket {
     on(event: string, cb: (data: unknown) => void): void;
     write(data: Uint8Array): void;
     destroy(): void;
     address(): unknown;
+    authorized?: boolean;
+    authorizationError?: Error;
 }
 
 /**
- * TCPTransport — Node.js implementation using 'node:net'.
+ * TCPTransport — Node.js implementation using 'node:tls' for mTLS.
  */
 export class TCPTransport extends BaseTransport {
-    readonly protocol = 'tcp';
-    public server: net.Server | null = null;
+    readonly protocol = 'tls'; // Renamed from tcp to indicate mTLS
+    public server: tls.Server | null = null;
     public peers = new Map<string, PeerState>();
     private authHandler: TCPAuthHandler;
     
     public privateKey?: string;
     public registry?: IServiceRegistry;
     public logger?: ILogger;
+
+    public tlsOptions?: tls.TlsOptions;
 
     constructor(serializer: BaseSerializer) {
         super(serializer);
@@ -41,11 +45,22 @@ export class TCPTransport extends BaseTransport {
         this.logger = opts.logger;
         this.privateKey = (opts as unknown as { privateKey: string }).privateKey;
         this.registry = (opts as unknown as { registry: IServiceRegistry }).registry;
+        this.tlsOptions = (opts as unknown as { tls: tls.TlsOptions }).tls;
+
+        if (!this.tlsOptions || !this.tlsOptions.key || !this.tlsOptions.cert) {
+            this.logger?.warn('[TCPTransport] mTLS options missing. Falling back to insecure TLS (NOT RECOMMENDED).');
+        }
 
         const port = opts.port || 4000;
 
         return new Promise((resolve, reject) => {
-            this.server = net.createServer((socket: net.Socket) => this.handleConnection(socket as unknown as INodeSocket));
+            const serverOptions: tls.TlsOptions = {
+                ...this.tlsOptions,
+                requestCert: true,
+                rejectUnauthorized: true, // STRICT mTLS ENFORCEMENT
+            };
+
+            this.server = tls.createServer(serverOptions, (socket: tls.TLSSocket) => this.handleConnection(socket as unknown as INodeSocket));
             this.server.on('error', (err: Error) => {
                 this.emit('error', err);
                 reject(err);
@@ -94,7 +109,38 @@ export class TCPTransport extends BaseTransport {
         }
     }
 
+    public allowedCIDRs: string[] = [];
+
+    private checkIPAllowed(ip: string): boolean {
+        // Basic CIDR / Exact match logic.
+        // In a real implementation, we would use a library like 'ipaddr.js'.
+        // For now, we'll do exact match and prefix match as a placeholder.
+        return this.allowedCIDRs.some(cidr => {
+            if (cidr.includes('/')) {
+                const [range] = cidr.split('/');
+                return ip.startsWith(range); // Naive prefix match for this prototype
+            }
+            return cidr === ip;
+        });
+    }
+
     private handleConnection(socket: INodeSocket) {
+        const remoteAddress = (socket as any).remoteAddress;
+        if (this.allowedCIDRs.length > 0 && remoteAddress) {
+            const isAllowed = this.checkIPAllowed(remoteAddress);
+            if (!isAllowed) {
+                this.logger?.warn(`[TCPTransport] Connection rejected from unauthorized IP: ${remoteAddress}`);
+                socket.destroy();
+                return;
+            }
+        }
+
+        if (!socket.authorized) {
+            this.logger?.error(`[TCPTransport] mTLS Unauthorized: ${socket.authorizationError?.message}`);
+            socket.destroy();
+            return;
+        }
+
         const peer: PeerState = {
             socket,
             nodeID: null,
@@ -123,8 +169,9 @@ export class TCPTransport extends BaseTransport {
     }
 
     private processData(peer: PeerState, chunk: Uint8Array) {
-        if (peer.bufferPot.length + chunk.length > TCPFrameCodec.MAX_FRAME_SIZE + 21) {
-            this.logger?.error(`[TCPTransport] Buffer overflow from ${peer.nodeID || 'unknown'}. Closing.`);
+        // Strict edge enforcement: prevent even appending to buffer if it would exceed limits
+        if (peer.bufferPot.length + chunk.length > TCPFrameCodec.MAX_FRAME_SIZE + 64) {
+            this.logger?.error(`[TCPTransport] Buffer overflow threat from ${peer.nodeID || 'unknown'}. Killing connection.`);
             (peer.socket as INodeSocket).destroy();
             return;
         }
