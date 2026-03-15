@@ -10,6 +10,8 @@ import { Env } from '../utils/Env';
 import { IInterceptor } from 'isomorphic-core';
 import { RoutingInterceptor } from '../interceptors/RoutingInterceptor';
 import { TraceInterceptor } from '../interceptors/TraceInterceptor';
+import { RateLimitInterceptor } from '../interceptors/RateLimitInterceptor';
+import { CircuitBreakerInterceptor } from '../interceptors/CircuitBreakerInterceptor';
 
 export interface MeshNetworkOptions extends TransportOptions {
     nodeId?: string;
@@ -33,6 +35,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
     public readonly server: UnifiedServer | null = null;
 
     private interceptors: IInterceptor<IMeshPacket, IMeshPacket>[] = [];
+    private rateLimiter: RateLimitInterceptor;
+    private circuitBreaker: CircuitBreakerInterceptor;
 
     constructor(options: MeshNetworkOptions, logger: ILogger, registry: IServiceRegistry) {
         super();
@@ -59,11 +63,24 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
 
         this.controller.registerHandlers(this.dispatcher);
 
+        // Initialize Resiliency Interceptors
+        this.rateLimiter = new RateLimitInterceptor();
+        this.circuitBreaker = new CircuitBreakerInterceptor();
+
         // Register default routing interceptors
+        this.use(this.rateLimiter);
+        this.use(this.circuitBreaker);
         this.use(new RoutingInterceptor(this.nodeID, this.transport));
         this.use(new TraceInterceptor());
 
         this.transport.on('packet', async (packet: MeshPacket) => {
+            // Track Resiliency Status
+            if (packet.type === 'RESPONSE_ERROR') {
+                this.circuitBreaker.recordFailure(packet.senderNodeID);
+            } else if (packet.type === 'RESPONSE') {
+                this.circuitBreaker.recordSuccess(packet.senderNodeID);
+            }
+
             let processedData: IMeshPacket = packet;
 
             // Execute Inbound Pipeline
@@ -79,6 +96,15 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
 
     public use(interceptor: IInterceptor<IMeshPacket, IMeshPacket>): void {
         this.interceptors.push(interceptor);
+    }
+
+    /**
+     * Ties a metrics registry to the network stack for resiliency event tracking.
+     */
+    public setMetrics(metrics: any): void {
+        // Update existing interceptors with the metrics registry
+        (this.rateLimiter as any).metrics = metrics;
+        (this.circuitBreaker as any).metrics = metrics;
     }
 
     async start(): Promise<void> {

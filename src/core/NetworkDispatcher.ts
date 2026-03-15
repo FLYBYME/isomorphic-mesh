@@ -3,24 +3,14 @@ import { MeshPacket } from '../types/packet.types';
 
 export type NetworkHandler = (data: any, packet: MeshPacket) => void | Promise<void>;
 
-interface RateLimitInfo {
-    count: number;
-    resetAt: number;
-}
-
 /**
  * NetworkDispatcher - Routes incoming network packets to the appropriate handlers.
- * Includes a built-in Rate Limiting middleware and Hub-and-Spoke Proxy logic.
+ * Includes Hub-and-Spoke Proxy logic.
  */
 export class NetworkDispatcher {
     private handlers: Map<string, NetworkHandler> = new Map();
     private prefixHandlers: Map<string, NetworkHandler> = new Map();
     
-    // Rate Limiting
-    private rateLimits = new Map<string, RateLimitInfo>();
-    private readonly MAX_PACKETS_PER_WINDOW = 1000;
-    private readonly WINDOW_MS = 60000;
-
     constructor(
         private logger: ILogger,
         private registry?: IServiceRegistry,
@@ -43,25 +33,6 @@ export class NetworkDispatcher {
      * Dispatch an incoming packet to the registered handlers.
      */
     async dispatch(packet: MeshPacket): Promise<void> {
-        // 1. Rate Limiting Middleware
-        if (packet.senderNodeID && !this.checkRateLimit(packet.senderNodeID)) {
-            this.logger.warn(`[NetworkDispatcher] Rate limit exceeded for node: ${packet.senderNodeID}`);
-            
-            // Increment metrics if registry is available
-            if (this.registry) {
-                try {
-                    // Try to get metrics provider from the registry's parent app if possible, 
-                    // or just use a generic name if we can't.
-                    // Since NetworkDispatcher doesn't have direct access to app, 
-                    // we'll rely on the fact that metrics might be injected later.
-                    (this.registry as any).metrics?.increment('mesh.rate_limit.exceeded', 1, { 
-                        senderNodeID: packet.senderNodeID 
-                    });
-                } catch (e) { /* ignore */ }
-            }
-            return;
-        }
-
         const isDirect = packet.topic === '__direct';
         const topic = isDirect ? (packet as any).data?.topic as string : packet.topic;
         let data: unknown = isDirect ? (packet as any).data : ((packet as any).data ?? packet);
@@ -75,7 +46,7 @@ export class NetworkDispatcher {
             return;
         }
 
-        // 2. Hub-and-Spoke Proxy Logic
+        // 1. Hub-and-Spoke Proxy Logic
         // If we have a registry and this topic isn't handled locally, check if it's shadowed.
         if (this.registry && !this.handlers.has(topic) && this.transportSend) {
             const nodes = this.registry.getAvailableNodes();
@@ -103,14 +74,14 @@ export class NetworkDispatcher {
             }
         }
 
-        // 3. Exact Match
+        // 2. Exact Match
         const handler = this.handlers.get(topic);
         if (handler) {
             await handler(data, packet);
             return;
         }
 
-        // 4. Prefix Match
+        // 3. Prefix Match
         for (const [prefix, h] of this.prefixHandlers.entries()) {
             if (topic.startsWith(prefix)) {
                 await h(data, packet);
@@ -119,38 +90,5 @@ export class NetworkDispatcher {
         }
         
         this.logger.debug(`[NetworkDispatcher] No handler registered for topic: ${topic}`);
-    }
-
-    /**
-     * Simple sliding window rate limiter.
-     */
-    private checkRateLimit(nodeID: string): boolean {
-        const now = Date.now();
-        let info = this.rateLimits.get(nodeID);
-
-        if (!info || now > info.resetAt) {
-            info = { count: 1, resetAt: now + this.WINDOW_MS };
-            this.rateLimits.set(nodeID, info);
-            return true;
-        }
-
-        info.count++;
-        if (info.count > this.MAX_PACKETS_PER_WINDOW) {
-            return false;
-        }
-
-        return true;
-    }
-
-    /**
-     * Periodically cleanup the rate limit cache.
-     */
-    public cleanupRateLimits(): void {
-        const now = Date.now();
-        for (const [nodeID, info] of this.rateLimits.entries()) {
-            if (now > info.resetAt) {
-                this.rateLimits.delete(nodeID);
-            }
-        }
     }
 }
