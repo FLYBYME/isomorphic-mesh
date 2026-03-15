@@ -1,4 +1,5 @@
-export type PacketType = 'REQUEST' | 'RESPONSE' | 'RESPONSE_ERROR' | 'EVENT' | 'AUTH' | 'PING';
+export type PacketType = 'REQUEST' | 'RESPONSE' | 'RESPONSE_ERROR' | 'EVENT' | 'AUTH' | 'PING' 
+    | 'STREAM_OPEN' | 'STREAM_DATA' | 'STREAM_ACK' | 'STREAM_CLOSE' | 'STREAM_ERROR';
 
 export interface BasePacket {
     id: string;
@@ -36,7 +37,18 @@ export interface EventPacket extends BasePacket {
     data: unknown;
 }
 
-export type MeshPacket = RPCRequest | RPCResponse | RPCErrorResponse | EventPacket;
+export interface StreamPacket extends BasePacket {
+    type: 'STREAM_OPEN' | 'STREAM_DATA' | 'STREAM_ACK' | 'STREAM_CLOSE' | 'STREAM_ERROR';
+    streamID: string;
+    data?: unknown;
+    error?: {
+        message: string;
+        code?: number | string;
+        data?: unknown;
+    };
+}
+
+export type MeshPacket = RPCRequest | RPCResponse | RPCErrorResponse | EventPacket | StreamPacket;
 
 /**
  * Utility to check if a packet is of a certain type.
@@ -55,4 +67,8 @@ export function isRPCErrorResponse(packet: MeshPacket): packet is RPCErrorRespon
 
 export function isEventPacket(packet: MeshPacket): packet is EventPacket {
     return packet.type === 'EVENT';
+}
+
+export function isStreamPacket(packet: MeshPacket): packet is StreamPacket {
+    return ['STREAM_OPEN', 'STREAM_DATA', 'STREAM_ACK', 'STREAM_CLOSE', 'STREAM_ERROR'].includes(packet.type);
 }
