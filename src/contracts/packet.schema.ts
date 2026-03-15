@@ -5,7 +5,7 @@ import { z } from 'zod';
  */
 export const MeshPacketSchema = z.object({
     id: z.string().uuid(),
-    type: z.enum(['call', 'emit', 'reply', 'error']),
+    type: z.enum(['call', 'emit', 'reply', 'error', 'telemetry']),
     action: z.string().optional(),
     payload: z.unknown(),
     meta: z.object({
@@ -34,7 +34,7 @@ export const TelemetryPacketSchema = z.object({
     id: z.string().uuid(),
     nodeID: z.string(),
     timestamp: z.number(),
-    type: z.enum(['log', 'metric']),
+    type: z.enum(['log', 'metric', 'log_batch']),
     payload: z.discriminatedUnion('type', [
         z.object({
             type: z.literal('log'),
@@ -43,6 +43,17 @@ export const TelemetryPacketSchema = z.object({
             data: z.record(z.string(), z.unknown()).optional(),
             traceId: z.string().optional(),
             spanId: z.string().optional(),
+        }),
+        z.object({
+            type: z.literal('log_batch'),
+            entries: z.array(z.object({
+                level: z.enum(['debug', 'info', 'warn', 'error']),
+                message: z.string(),
+                data: z.record(z.string(), z.unknown()).optional(),
+                traceId: z.string().optional(),
+                spanId: z.string().optional(),
+                timestamp: z.number()
+            }))
         }),
         z.object({
             type: z.literal('metric'),
