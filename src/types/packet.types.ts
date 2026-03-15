@@ -6,6 +6,8 @@ export interface BasePacket {
     type: PacketType;
     senderNodeID: string;
     timestamp: number;
+    version?: number;
+    priority?: number;
     meta?: Record<string, unknown>;
 }
 
@@ -26,6 +28,7 @@ export interface RPCErrorResponse extends BasePacket {
         code?: number | string;
         data?: unknown;
     };
+    data?: never; // Ensure data is not used in errors
 }
 
 export interface EventPacket extends BasePacket {

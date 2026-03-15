@@ -56,20 +56,23 @@ export class MeshOrchestrator {
         const target = nodes[Math.floor(Math.random() * nodes.length)];
         this.logger.debug(`Gossip: Exchanging peer list with ${target.nodeID}`);
 
-        // Send our known nodes (excluding the target itself)
-        const knownNodes = this.node.registry.getNodes()
-            .filter(n => n.nodeID !== target.nodeID)
-            .map(n => ({
-                nodeID: n.nodeID,
-                addresses: n.addresses,
-                namespace: n.namespace,
-                type: n.type
-            }));
+        // Send a random subset of our known nodes (max 50) to prevent saturating the network
+        const allKnown = this.node.registry.getNodes()
+            .filter(n => n.nodeID !== target.nodeID);
+        
+        const subset = allKnown.sort(() => 0.5 - Math.random()).slice(0, 50);
+
+        const peers = subset.map(n => ({
+            nodeID: n.nodeID,
+            addresses: n.addresses,
+            namespace: n.namespace,
+            type: n.type
+        }));
 
         // We use the node's emit/publish mechanism via the dispatcher or direct transport
         // For simplicity, we assume the dispatcher handles '$node.pex'
-        (this.node as any).publish('$node.pex', {
-            peers: knownNodes
+        this.node.publish('$node.pex', {
+            peers
         }).catch(() => {});
     }
 

@@ -46,42 +46,14 @@ export class NetworkDispatcher {
             return;
         }
 
-        // 1. Hub-and-Spoke Proxy Logic
-        // If we have a registry and this topic isn't handled locally, check if it's shadowed.
-        if (this.registry && !this.handlers.has(topic) && this.transportSend) {
-            const nodes = this.registry.getAvailableNodes();
-            const worker = nodes.find(n => 
-                n.parentID === this.nodeID && 
-                n.nodeType === 'worker' &&
-                n.services.some(svc => {
-                    const svcName = svc.fullName || svc.name;
-                    return (svc.actions && Object.keys(svc.actions).some(k => k === topic || `${svcName}.${k}` === topic));
-                })
-            );
-
-            if (worker) {
-                this.logger.debug(`[NetworkDispatcher] Proxying request for ${topic} to worker ${worker.nodeID}`);
-                const proxyPacket: MeshPacket = {
-                    ...packet,
-                    meta: {
-                        ...packet.meta,
-                        finalDestinationID: worker.nodeID,
-                        isProxy: true
-                    }
-                };
-                await this.transportSend(worker.nodeID, proxyPacket);
-                return;
-            }
-        }
-
-        // 2. Exact Match
+        // 1. Exact Match
         const handler = this.handlers.get(topic);
         if (handler) {
             await handler(data, packet);
             return;
         }
 
-        // 3. Prefix Match
+        // 2. Prefix Match
         for (const [prefix, h] of this.prefixHandlers.entries()) {
             if (topic.startsWith(prefix)) {
                 await h(data, packet);
@@ -90,5 +62,13 @@ export class NetworkDispatcher {
         }
         
         this.logger.debug(`[NetworkDispatcher] No handler registered for topic: ${topic}`);
+    }
+
+    public hasHandler(topic: string): boolean {
+        if (this.handlers.has(topic)) return true;
+        for (const prefix of this.prefixHandlers.keys()) {
+            if (topic.startsWith(prefix)) return true;
+        }
+        return false;
     }
 }

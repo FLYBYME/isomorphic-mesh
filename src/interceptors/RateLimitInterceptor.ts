@@ -15,8 +15,11 @@ export class RateLimitInterceptor implements IInterceptor<IMeshPacket, IMeshPack
     private rateLimits = new Map<string, RateLimitInfo>();
     private readonly MAX_PACKETS_PER_WINDOW = 1000;
     private readonly WINDOW_MS = 60000;
+    private cleanupInterval: NodeJS.Timeout;
 
-    constructor(private metrics?: any) {}
+    constructor(private metrics?: any) {
+        this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000); // 5 mins
+    }
 
     async onInbound(packet: IMeshPacket): Promise<IMeshPacket> {
         if (!packet.senderNodeID) return packet;
@@ -63,10 +66,16 @@ export class RateLimitInterceptor implements IInterceptor<IMeshPacket, IMeshPack
      */
     public cleanup(): void {
         const now = Date.now();
-        for (const [nodeID, info] of this.rateLimits.entries()) {
+        for (const [key, info] of this.rateLimits.entries()) {
             if (now > info.resetAt) {
-                this.rateLimits.delete(nodeID);
+                this.rateLimits.delete(key);
             }
+        }
+    }
+
+    public stop(): void {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
         }
     }
 }

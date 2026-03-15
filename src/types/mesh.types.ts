@@ -87,6 +87,8 @@ export interface PeerState {
     isAuthenticated: boolean;
     isChoked: boolean;
     bufferPot: Uint8Array;
+    bufferList: Uint8Array[];
+    bufferPotSize: number;
 }
 
 export type TransportType = 'ws' | 'http' | 'tcp' | 'ipc' | 'nats' | 'mock';

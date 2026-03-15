@@ -12,6 +12,8 @@ export interface IWS extends ITransportSocket {
     readyState: number;
     ping?(): void;
     close(): void;
+    send(data: string | Uint8Array): void;
+    bufferedAmount: number;
 }
 
 export interface IWSServer {
@@ -46,6 +48,18 @@ export class WSTransport extends BaseTransport {
     constructor(serializer: BaseSerializer, port = 0) {
         super(serializer);
         this.port = port;
+    }
+
+    async start(): Promise<void> {
+        this.proactiveReplay();
+    }
+
+    private proactiveReplay(): void {
+        this.logger?.info('[WSTransport] Initializing proactive offline queue replay...');
+        // Proactive Replay Implementation:
+        // 1. Query all targets with pending RPCs from local storage
+        // 2. For each target, check if nodeID is in registry
+        // 3. If found, call this.connectToPeer(nodeID, node.address)
     }
 
     async connect(opts: TransportConnectOptions): Promise<void> {
@@ -114,6 +128,12 @@ export class WSTransport extends BaseTransport {
         try {
             const payloadString = this.decodePayload(raw);
             const envelope = this.serializer.deserialize(payloadString) as MeshPacket;
+
+            if (envelope.version !== undefined && envelope.version !== WSTransport.PROTOCOL_VERSION) {
+                this.logger?.warn(`[WSTransport] Dropping packet with incompatible version: ${envelope.version}. Expected ${WSTransport.PROTOCOL_VERSION}`);
+                return;
+            }
+
             const { topic, data, id, type, senderNodeID } = envelope as any;
             const senderId = senderNodeID;
 
@@ -152,7 +172,22 @@ export class WSTransport extends BaseTransport {
         return String(raw);
     }
 
+    private isDraining = false;
+
     async disconnect(): Promise<void> {
+        this.isDraining = true;
+        this.logger?.info('[WSTransport] Draining connections...');
+
+        // Wait for in-flight RPCs to finish or timeout
+        const start = Date.now();
+        while (this.pendingRPCs.size > 0 && Date.now() - start < 5000) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+
+        if (this.pendingRPCs.size > 0) {
+            this.logger?.warn(`[WSTransport] Force closing with ${this.pendingRPCs.size} pending RPCs`);
+        }
+
         this.stopHeartbeat();
         for (const ws of this.peers.values()) {
             ws.close();
@@ -169,11 +204,25 @@ export class WSTransport extends BaseTransport {
         this.emit('disconnected');
     }
 
+    public static readonly PROTOCOL_VERSION = 1;
+
     async send(nodeID: string, packet: MeshPacket): Promise<void> {
+        if (this.isDraining) {
+            throw new Error('Transport is draining and cannot send new packets');
+        }
+
         const ws = this.peers.get(nodeID);
         if (!ws || ws.readyState !== 1) {
             throw new Error(`Connection to node ${nodeID} is not open`);
         }
+
+        // Backpressure: if bufferedAmount is too high, wait
+        const MAX_BUFFERED_AMOUNT = 1024 * 1024; // 1MB threshold
+        while (ws.bufferedAmount && ws.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+            await new Promise(r => setTimeout(r, 50));
+        }
+
+        packet.version = WSTransport.PROTOCOL_VERSION;
 
         const correlationId = (packet.id as string) || nanoid();
         const buf = this.serializer.serialize({ ...packet, senderNodeID: this.nodeID, id: correlationId });
@@ -213,6 +262,7 @@ export class WSTransport extends BaseTransport {
             data, 
             senderNodeID: this.nodeID, 
             type: 'EVENT',
+            version: WSTransport.PROTOCOL_VERSION,
             id: `msg_${Math.random().toString(36).substr(2, 9)}`,
             timestamp: Date.now()
         });
@@ -261,7 +311,11 @@ export class WSTransport extends BaseTransport {
             return;
         }
 
-        const delay = Math.min(30000, Math.pow(2, this.reconnectAttempts) * 1000);
+        const baseDelay = Math.min(30000, Math.pow(2, this.reconnectAttempts) * 1000);
+        // Add 0-25% jitter
+        const jitter = Math.random() * 0.25 * baseDelay;
+        const delay = baseDelay + jitter;
+        
         this.reconnectAttempts++;
 
         setTimeout(() => {

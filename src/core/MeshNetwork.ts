@@ -12,6 +12,9 @@ import { RoutingInterceptor } from '../interceptors/RoutingInterceptor';
 import { TraceInterceptor } from '../interceptors/TraceInterceptor';
 import { RateLimitInterceptor } from '../interceptors/RateLimitInterceptor';
 import { CircuitBreakerInterceptor } from '../interceptors/CircuitBreakerInterceptor';
+import { WorkerProxyInterceptor } from '../interceptors/WorkerProxyInterceptor';
+import { TCPTransport } from '../transports/node/TCPTransport';
+import { WSTransport } from '../transports/node/WSTransport';
 
 export interface MeshNetworkOptions extends TransportOptions {
     nodeId?: string;
@@ -61,6 +64,9 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             bootstrapNodes: options.bootstrapNodes
         });
 
+        // Set orchestrator on IMeshNode interface
+        (this as any).orchestrator = this.orchestrator;
+
         this.controller.registerHandlers(this.dispatcher);
 
         // Initialize Resiliency Interceptors
@@ -70,6 +76,7 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
         // Register default routing interceptors
         this.use(this.rateLimiter);
         this.use(this.circuitBreaker);
+        this.use(new WorkerProxyInterceptor(this.nodeID, this.registry, (t) => this.dispatcher.hasHandler(t)));
         this.use(new RoutingInterceptor(this.nodeID, this.transport));
         this.use(new TraceInterceptor());
 
@@ -120,12 +127,20 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
     async stop(): Promise<void> {
         await this.orchestrator.stop();
         await this.transport.disconnect();
+        this.rateLimiter.stop();
         if (this.server) {
             await this.server.stop();
         }
     }
 
     async send<T>(targetNodeID: string, topic: string, data: T, options?: Partial<IMeshPacket<T>>): Promise<void> {
+        let priority = options?.priority ?? 1; // Default Normal
+        
+        // Auto-detect QoS for critical infrastructure topics
+        if (topic.startsWith('raft.') || topic.startsWith('kademlia.')) {
+            priority = 2; // High Priority
+        }
+
         let packet: IMeshPacket = {
             topic,
             data,
@@ -133,6 +148,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             type: options?.type || 'EVENT',
             senderNodeID: this.nodeID,
             timestamp: Date.now(),
+            version: (TCPTransport as any).PROTOCOL_VERSION, // Use common version
+            priority,
             meta: options?.meta
         };
 
@@ -151,6 +168,11 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
     }
 
     async publish<T>(topic: string, data: T): Promise<void> {
+        let priority = 1;
+        if (topic.startsWith('raft.') || topic.startsWith('kademlia.')) {
+            priority = 2;
+        }
+
         const packet: IMeshPacket = {
             topic,
             data,
@@ -158,6 +180,8 @@ export class MeshNetwork extends EventEmitter implements IMeshNetwork {
             type: 'EVENT',
             senderNodeID: this.nodeID,
             timestamp: Date.now(),
+            version: TCPTransport.PROTOCOL_VERSION,
+            priority,
             meta: {}
         };
 

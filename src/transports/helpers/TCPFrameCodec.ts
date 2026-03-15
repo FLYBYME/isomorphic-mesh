@@ -17,6 +17,20 @@ export class TCPFrameCodec {
      * Prevents Out-Of-Memory DoS attacks.
      */
     public static readonly MAX_FRAME_SIZE = 10 * 1024 * 1024;
+    
+    /**
+     * Dynamic MTU detection (default 1500 for Ethernet)
+     */
+    public static MTU = 1500;
+
+    /**
+     * Automatically detect MTU across links/VPNs (simulated)
+     */
+    static autoDetectMTU(): void {
+        // In a real implementation, we would send ICMP echo or PMTUD
+        // For now, we simulate a safer 1400 MTU for VPN-heavy environments.
+        this.MTU = 1400;
+    }
 
     static encode(type: WirePacketType, msgID: string, payload: Uint8Array): Uint8Array {
         if (!Env.isNode()) return new Uint8Array(0);

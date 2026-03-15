@@ -21,6 +21,7 @@ export interface INodeSocket extends ITransportSocket {
  */
 export class TCPTransport extends BaseTransport {
     readonly protocol = 'tls'; // Renamed from tcp to indicate mTLS
+    public static readonly PROTOCOL_VERSION = 1;
     public server: tls.Server | null = null;
     public peers = new Map<string, PeerState>();
     private authHandler: TCPAuthHandler;
@@ -90,12 +91,24 @@ export class TCPTransport extends BaseTransport {
         const peer = this.peers.get(nodeID);
         if (!peer || !peer.isAuthenticated) throw new Error(`Target node ${nodeID} is not connected or authenticated`);
         
+        packet.version = TCPTransport.PROTOCOL_VERSION;
+
         const type = (packet.type === 'RESPONSE' || packet.type === 'RESPONSE_ERROR') ? WirePacketType.RPC_RES : WirePacketType.RPC_REQ;
         const payload = this.serializer.serialize(packet);
         const msgID = (packet.id as string || '0000000000000000').slice(0, 16).padEnd(16, '0');
         
         const frame = TCPFrameCodec.encode(type, msgID, payload);
-        (peer.socket as INodeSocket).write(frame);
+        const canWrite = (peer.socket as any).write(frame);
+
+        if (!canWrite) {
+            peer.isChoked = true;
+            await new Promise<void>((resolve) => {
+                (peer.socket as any).once('drain', () => {
+                    peer.isChoked = false;
+                    resolve();
+                });
+            });
+        }
     }
 
     async publish(topic: string, data: unknown): Promise<void> {
@@ -146,7 +159,9 @@ export class TCPTransport extends BaseTransport {
             nodeID: null,
             isAuthenticated: false,
             isChoked: true,
-            bufferPot: new Uint8Array(0)
+            bufferPot: new Uint8Array(0),
+            bufferList: [],
+            bufferPotSize: 0
         };
 
         const nonce = IsomorphicCrypto.randomID(16);
@@ -169,29 +184,71 @@ export class TCPTransport extends BaseTransport {
     }
 
     private processData(peer: PeerState, chunk: Uint8Array) {
-        // Strict edge enforcement: prevent even appending to buffer if it would exceed limits
-        if (peer.bufferPot.length + chunk.length > TCPFrameCodec.MAX_FRAME_SIZE + 64) {
+        // Strict edge enforcement
+        if (peer.bufferPotSize + chunk.length > TCPFrameCodec.MAX_FRAME_SIZE + 64) {
             this.logger?.error(`[TCPTransport] Buffer overflow threat from ${peer.nodeID || 'unknown'}. Killing connection.`);
             (peer.socket as INodeSocket).destroy();
             return;
         }
 
-        const combined = new Uint8Array(peer.bufferPot.length + chunk.length);
-        combined.set(peer.bufferPot);
-        combined.set(chunk, peer.bufferPot.length);
-        peer.bufferPot = combined;
+        peer.bufferList.push(chunk);
+        peer.bufferPotSize += chunk.length;
         
         try {
             while (true) {
-                const { frame, remaining } = TCPFrameCodec.decode(peer.bufferPot);
+                // Peek at the header to see if we have enough data for a frame
+                let totalAvailable = peer.bufferPotSize;
+                if (totalAvailable < 21) break; // Not enough for header
+
+                // Concatenate only what we need to decode the next frame header
+                const tempBuf = this.flattenBufferList(peer.bufferList, 21);
+                const payloadLen = new DataView(tempBuf.buffer, tempBuf.byteOffset).getUint32(1 + 16);
+                const totalFrameLen = 21 + payloadLen;
+
+                if (totalAvailable < totalFrameLen) break; // Incomplete frame
+
+                // Now we have a full frame, flatten the exact amount
+                const fullFrameBuf = this.flattenBufferList(peer.bufferList, totalFrameLen);
+                
+                // Update PeerState
+                const { frame, remaining } = TCPFrameCodec.decode(fullFrameBuf);
                 if (!frame) break;
-                peer.bufferPot = remaining;
+
+                // Reset list with remaining data
+                peer.bufferList = remaining.length > 0 ? [remaining] : [];
+                peer.bufferPotSize = remaining.length;
+
                 this.dispatchFrame(peer, frame);
             }
         } catch (err: unknown) {
             this.logger?.error(`[TCPTransport] Framing error: ${err instanceof Error ? err.message : String(err)}`);
             (peer.socket as INodeSocket).destroy();
         }
+    }
+
+    private flattenBufferList(list: Uint8Array[], length: number): Uint8Array {
+        const result = new Uint8Array(length);
+        let offset = 0;
+        for (let i = 0; i < list.length; i++) {
+            const chunk = list[i];
+            const toCopy = Math.min(chunk.length, length - offset);
+            result.set(chunk.subarray(0, toCopy), offset);
+            offset += toCopy;
+            
+            // If chunk was partially copied, replace it in the list with the remainder
+            if (toCopy < chunk.length) {
+                list[i] = chunk.subarray(toCopy);
+                // Remove fully copied preceding chunks
+                list.splice(0, i);
+                return result;
+            }
+            if (offset === length) {
+                // Remove fully copied chunks
+                list.splice(0, i + 1);
+                return result;
+            }
+        }
+        return result;
     }
 
     private async dispatchFrame(peer: PeerState, frame: Uint8Array) {
@@ -218,6 +275,13 @@ export class TCPTransport extends BaseTransport {
             case WirePacketType.RPC_RES:
                 try {
                     const packet = this.serializer.deserialize(payload) as unknown as MeshPacket;
+                    
+                    // Strict Protocol Versioning
+                    if (packet.version !== undefined && packet.version !== TCPTransport.PROTOCOL_VERSION) {
+                        this.logger?.warn(`[TCPTransport] Dropping packet with incompatible protocol version: ${packet.version}. Expected ${TCPTransport.PROTOCOL_VERSION}`);
+                        return;
+                    }
+
                     this.emit('packet', packet);
                 } catch (err) { }
                 break;
@@ -231,9 +295,15 @@ export class TCPTransport extends BaseTransport {
                 return;
             }
             try {
-                (peer.socket as INodeSocket).write(TCPFrameCodec.encode(WirePacketType.PING, 'ping', new Uint8Array(0)));
-            } catch (err) {
-                this.logger?.warn(`Heartbeat failed for ${peer.nodeID}`);
+                const pong = TCPFrameCodec.encode(WirePacketType.PING, 'ping', new Uint8Array(0));
+                (peer.socket as any).write(pong, (err: any) => {
+                    if (err) {
+                        this.logger?.warn(`Heartbeat write failed for ${peer.nodeID}: ${err.message}`);
+                        (peer.socket as INodeSocket).destroy();
+                    }
+                });
+            } catch (err: any) {
+                this.logger?.warn(`Heartbeat failed for ${peer.nodeID}: ${err.message}`);
                 (peer.socket as INodeSocket).destroy();
             }
         }, 10000); // 10s heartbeat
@@ -242,7 +312,7 @@ export class TCPTransport extends BaseTransport {
     async connectToPeer(nodeID: string, url: string): Promise<void> {
         const parsed = new URL(url);
         return new Promise((resolve, reject) => {
-            const socket = net.connect(Number(parsed.port), parsed.hostname, () => {
+            const socket = tls.connect(Number(parsed.port), parsed.hostname, this.tlsOptions, () => {
                 const peer: PeerState = {
                     socket: socket as unknown as INodeSocket,
                     nodeID,

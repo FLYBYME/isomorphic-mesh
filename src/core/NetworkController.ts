@@ -37,8 +37,7 @@ export class NetworkController {
 
     private async handlePing(packet: MeshPacket): Promise<void> {
         if (packet.senderNodeID === this.node.nodeID) return;
-        const net = this.node as unknown as { publish(topic: string, data: unknown): void };
-        net.publish('$node.pong', { id: packet.id, timestamp: Date.now() });
+        this.node.publish('$node.pong', { id: packet.id, timestamp: Date.now() });
     }
 
     private async handlePong(data: any, packet: MeshPacket): Promise<void> {
@@ -46,10 +45,9 @@ export class NetworkController {
     }
 
     private async handlePex(data: any, packet: MeshPacket): Promise<void> {
-        const net = this.node as unknown as { orchestrator: { updatePeers(nodes: any[]): void } };
-        const orchestrator = net.orchestrator;
-        if (orchestrator && data.nodes) {
-            orchestrator.updatePeers(data.nodes);
+        const orchestrator = this.node.orchestrator;
+        if (orchestrator && typeof orchestrator.handlePEX === 'function' && data.peers) {
+            orchestrator.handlePEX(data);
         }
     }
 

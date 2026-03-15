@@ -42,6 +42,11 @@ export class TransportManager extends EventEmitter {
                 logger: this.node.logger,
                 port: opts.port
             });
+            
+            // Execute transport-specific startup (e.g. proactive replay)
+            if ((t as any).start) {
+                await (t as any).start();
+            }
         }
     }
 
